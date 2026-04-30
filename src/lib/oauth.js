@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import kleur from 'kleur';
@@ -9,24 +9,35 @@ const MCP_AUTH_DIR = path.join(os.homedir(), '.mcp-auth');
 const TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_MS = 500;
 const SETTLE_MS = 500;
+const STALE_LOCK_MS = 30 * 1000;
+const URL_RE = /https?:\/\/[^\s'"`]+/g;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function snapshotTokenFiles() {
+function listMcpRemoteSubdirs() {
   if (!existsSync(MCP_AUTH_DIR)) return [];
   const out = [];
   for (const sub of readdirSync(MCP_AUTH_DIR)) {
-    const subDir = path.join(MCP_AUTH_DIR, sub);
+    const full = path.join(MCP_AUTH_DIR, sub);
+    try {
+      if (statSync(full).isDirectory()) out.push(full);
+    } catch {}
+  }
+  return out;
+}
+
+function snapshotTokenFiles() {
+  const out = [];
+  for (const sub of listMcpRemoteSubdirs()) {
     let entries;
     try {
-      if (!statSync(subDir).isDirectory()) continue;
-      entries = readdirSync(subDir);
+      entries = readdirSync(sub);
     } catch {
       continue;
     }
     for (const f of entries) {
       if (!f.endsWith('_tokens.json')) continue;
-      const full = path.join(subDir, f);
+      const full = path.join(sub, f);
       try {
         out.push({ path: full, mtime: statSync(full).mtimeMs });
       } catch {}
@@ -35,13 +46,34 @@ function snapshotTokenFiles() {
   return out;
 }
 
+function cleanStaleLocks() {
+  for (const sub of listMcpRemoteSubdirs()) {
+    let entries;
+    try {
+      entries = readdirSync(sub);
+    } catch {
+      continue;
+    }
+    for (const f of entries) {
+      if (!f.endsWith('_lock.json')) continue;
+      const full = path.join(sub, f);
+      try {
+        const age = Date.now() - statSync(full).mtimeMs;
+        if (age > STALE_LOCK_MS) rmSync(full, { force: true });
+      } catch {}
+    }
+  }
+}
+
 export async function loginViaOAuth() {
+  cleanStaleLocks();
+
   const before = snapshotTokenFiles();
   const beforePaths = new Set(before.map((f) => f.path));
   const startedAt = Date.now();
 
   const child = spawn('npx', ['-y', 'mcp-remote', AGENTDM_MCP_URL], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     env: process.env,
   });
 
@@ -54,17 +86,32 @@ export async function loginViaOAuth() {
     } catch {}
   };
 
-  if (process.env.AGENTDM_DEBUG) {
-    child.stdout.on('data', (b) => process.stderr.write(kleur.dim(b.toString())));
-    child.stderr.on('data', (b) => process.stderr.write(kleur.dim(b.toString())));
-  } else {
-    child.stdout.on('data', () => {});
-    child.stderr.on('data', () => {});
-  }
-
-  const sigintHandler = () => {
-    stopChild();
+  let urlPrinted = false;
+  const onData = (buf) => {
+    const text = buf.toString();
+    process.stderr.write(kleur.dim(text));
+    if (!urlPrinted) {
+      const matches = text.match(URL_RE) || [];
+      const authUrl = matches.find(
+        (u) =>
+          /authorize|oauth|login|signin|sign-in/i.test(u) &&
+          !u.startsWith(AGENTDM_MCP_URL),
+      );
+      if (authUrl) {
+        urlPrinted = true;
+        process.stderr.write(
+          '\n' +
+            kleur.bold('If your browser didn\'t open, visit:\n  ') +
+            kleur.cyan(authUrl) +
+            '\n\n',
+        );
+      }
+    }
   };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+
+  const sigintHandler = () => stopChild();
   process.once('SIGINT', sigintHandler);
 
   let exitCode = null;
