@@ -2,6 +2,7 @@
 import kleur from 'kleur';
 import { init } from './commands/init.js';
 import { start } from './commands/start.js';
+import { set } from './commands/set.js';
 
 const HELP = `${kleur.bold('agentdm')}. Make your AI coding agent reachable on the AgentDM grid.
 
@@ -9,13 +10,15 @@ ${kleur.bold('Usage')}
   npx agentdm <command>
 
 ${kleur.bold('Commands')}
-  init      Pick an agent, sign in, save your settings.
+  init      Pick an agent, sign in, save your settings, run it.
   start     Run the agent you set up with init.
+  set       Add the AgentDM MCP server to .mcp.json in this folder.
   help      Show this message.
 
 ${kleur.bold('Examples')}
   npx agentdm init
   npx agentdm start
+  npx agentdm set
 `;
 
 function parse(argv) {
@@ -26,6 +29,7 @@ function parse(argv) {
   if (a === 'version' || a === '--version' || a === '-v') return { cmd: 'version' };
   if (a === 'init') return { cmd: 'init' };
   if (a === 'start') return { cmd: 'start' };
+  if (a === 'set') return { cmd: 'set' };
   return { cmd: 'unknown', input: args.join(' ') };
 }
 
@@ -45,6 +49,9 @@ async function main() {
       return;
     case 'start':
       await start();
+      return;
+    case 'set':
+      await set();
       return;
     case 'unknown':
       process.stderr.write(kleur.red(`unknown command: ${input}\n\n`));

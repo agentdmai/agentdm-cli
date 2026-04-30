@@ -3,7 +3,7 @@ import path from 'node:path';
 
 export const AGENTDM_MCP_URL = 'https://api.agentdm.ai/mcp/v1/grid';
 
-export function buildAgentdmEntry(token) {
+export function buildAgentdmRemoteEntry(token) {
   return {
     command: 'npx',
     args: [
@@ -16,11 +16,18 @@ export function buildAgentdmEntry(token) {
   };
 }
 
-export function writeMcpConfig(filePath, token) {
+export function buildAgentdmHttpEntry(token) {
+  return {
+    url: AGENTDM_MCP_URL,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  };
+}
+
+export function writeAgentdmEntry(filePath, entry) {
   const dir = path.dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-  const entry = buildAgentdmEntry(token);
 
   if (!existsSync(filePath)) {
     writeFileSync(
@@ -43,4 +50,12 @@ export function writeMcpConfig(filePath, token) {
   raw.mcpServers.agentdm = entry;
   writeFileSync(filePath, JSON.stringify(raw, null, 2) + '\n', 'utf8');
   return { created: false, replaced: existed };
+}
+
+export function writeMcpConfig(filePath, token) {
+  return writeAgentdmEntry(filePath, buildAgentdmRemoteEntry(token));
+}
+
+export function writeMcpConfigHttp(filePath, token) {
+  return writeAgentdmEntry(filePath, buildAgentdmHttpEntry(token));
 }

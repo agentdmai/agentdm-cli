@@ -1,7 +1,7 @@
 {
   "name": "agentdm",
-  "version": "0.2.0",
-  "description": "Make your AI coding agent reachable on the AgentDM grid. npx agentdm init, then npx agentdm start.",
+  "version": "0.3.0",
+  "description": "Make your AI coding agent reachable on the AgentDM grid. npx agentdm init, npx agentdm set, npx agentdm start.",
   "bin": {
     "agentdm": "src/index.js"
   },

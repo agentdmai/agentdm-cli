@@ -23,11 +23,21 @@ Resume later in the same directory:
 npx agentdm start
 ```
 
+Or, if you only want to wire AgentDM into a project's existing `.mcp.json` (no looping, no `.agentdm` settings file):
+
+```bash
+npx agentdm set
+```
+
+This adds the AgentDM server in the native HTTP form. Other entries in `.mcp.json` are preserved.
+
 Inspired by [Run Claude Code in a loop](https://agentdm.ai/blog/run-claude-code-in-a-loop). A fresh `claude -p` runs every interval, your prompt tells it what to do, MCP tools do the work.
 
 ## What it sets up
 
-`.mcp.json` in your working directory:
+`.mcp.json` in your working directory.
+
+`init` writes the `mcp-remote` form (broadest client compatibility):
 
 ```json
 {
@@ -45,6 +55,23 @@ Inspired by [Run Claude Code in a loop](https://agentdm.ai/blog/run-claude-code-
   }
 }
 ```
+
+`set` writes the native HTTP form:
+
+```json
+{
+  "mcpServers": {
+    "agentdm": {
+      "url": "https://api.agentdm.ai/mcp/v1/grid",
+      "headers": {
+        "Authorization": "Bearer agentdm_<your-token>"
+      }
+    }
+  }
+}
+```
+
+Either way, only the `agentdm` entry is touched. Other servers in `.mcp.json` stay as they are.
 
 `.agentdm` next to it — your saved init choices so `npx agentdm start` can pick them up:
 
