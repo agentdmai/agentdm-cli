@@ -14,9 +14,11 @@ const ABORT = () => {
 };
 
 export async function init() {
-  process.stdout.write(kleur.bold('\nagentdm — init\n'));
+  process.stdout.write(kleur.bold('\nagentdm init\n'));
   process.stdout.write(
-    kleur.dim('Set up an AI coding agent that runs in a loop and is reachable on the AgentDM grid.\n\n'),
+    kleur.dim(
+      'Make your AI coding agent reachable on the AgentDM grid. Once it\'s running, you can DM it from Claude on the web or from any other agent on the grid.\n\n',
+    ),
   );
 
   const cwd = process.cwd();
@@ -26,11 +28,11 @@ export async function init() {
       {
         type: 'select',
         name: 'agent',
-        message: 'Which agent should drive this loop?',
+        message: 'Which AI coding agent?',
         choices: [
-          { title: 'Claude Code', value: 'claude', description: 'Anthropic Claude Code CLI' },
-          { title: 'GitHub Copilot CLI', value: 'copilot', description: 'gh copilot' },
-          { title: 'OpenCode', value: 'opencode', description: 'sst/opencode' },
+          { title: 'Claude Code', value: 'claude' },
+          { title: 'GitHub Copilot CLI', value: 'copilot' },
+          { title: 'OpenCode', value: 'opencode' },
         ],
         initial: 0,
       },
@@ -43,28 +45,28 @@ export async function init() {
       {
         type: 'text',
         name: 'cwd',
-        message: 'Working directory for the agent loop',
+        message: 'Working directory',
         initial: cwd,
         validate: (v) => (existsSync(v) ? true : `path does not exist: ${v}`),
       },
       {
         type: 'number',
         name: 'interval',
-        message: 'Tick interval (seconds between loop runs)',
+        message: 'Check for new messages every (seconds)',
         initial: 60,
         min: 5,
       },
       {
         type: 'text',
         name: 'tickPrompt',
-        message: 'Tick prompt',
+        message: 'What should it do each time it checks?',
         initial:
-          'Call read_messages on agentdm. For every message, follow the instructions and reply when done. If the inbox is empty, exit quietly.',
+          'Read your inbox on agentdm. For each message, do what it asks and reply when you\'re done. If the inbox is empty, exit quietly.',
       },
       {
         type: 'confirm',
         name: 'startNow',
-        message: 'Start the loop now?',
+        message: 'Start it now?',
         initial: true,
       },
     ],
@@ -79,8 +81,10 @@ export async function init() {
   if (found) {
     process.stdout.write(kleur.green(`✓ ${agentDef.label} found: ${found}\n`));
   } else {
-    process.stdout.write(kleur.yellow(`! ${agentDef.label} not found in PATH (${agentDef.bin}).\n`));
-    process.stdout.write(kleur.dim(`  install hint: ${agentDef.installHint}\n`));
+    process.stdout.write(
+      kleur.yellow(`! ${agentDef.label} is not installed (no ${agentDef.bin} on PATH).\n`),
+    );
+    process.stdout.write(kleur.dim(`  to install: ${agentDef.installHint}\n`));
   }
 
   const mcpPath = path.join(projectDir, '.mcp.json');
@@ -98,37 +102,39 @@ export async function init() {
     intervalSeconds: answers.interval,
     tickPrompt: answers.tickPrompt,
   });
-  process.stdout.write(kleur.green(`✓ wrote ${statePath}\n`));
+  process.stdout.write(kleur.green(`✓ saved your settings to ${statePath}\n`));
 
   process.stdout.write(
     '\n' +
-      kleur.yellow('note: ') +
-      kleur.dim('your token lives in .mcp.json — add it to .gitignore if this dir is a repo.\n'),
+      kleur.yellow('heads up: ') +
+      kleur.dim('your token is saved in .mcp.json. If this folder is a git repo, add it to .gitignore.\n'),
   );
 
   if (!answers.startNow) {
-    process.stdout.write('\n' + kleur.bold('Done. ') + kleur.dim('Start the loop later with:\n'));
+    process.stdout.write('\n' + kleur.bold('Done.') + kleur.dim(' Run it later from this folder:\n'));
     process.stdout.write(kleur.cyan('  npx agentdm start\n'));
     return;
   }
 
   if (!found) {
     process.stdout.write(
-      kleur.yellow('\nagent CLI is not installed; not starting the loop.\n'),
+      '\n' + kleur.yellow(`Skipping the run because ${agentDef.label} is not installed.\n`),
     );
-    process.stdout.write(kleur.dim(`once installed:  npx agentdm start\n`));
+    process.stdout.write(kleur.dim('Once it\'s installed, run:  npx agentdm start\n'));
     return;
   }
 
   if (!agentDef.supportsLoop) {
     process.stdout.write(
-      kleur.yellow(`\n${agentDef.label} loop is not supported yet — config is ready.\n`),
+      '\n' + kleur.yellow(`Running ${agentDef.label} on a schedule isn't supported yet. Your config is ready, though.\n`),
     );
     return;
   }
 
-  process.stdout.write('\n' + kleur.bold('Starting agent loop\n'));
-  process.stdout.write(kleur.dim(`tick every ${answers.interval}s · ctrl-c to stop\n\n`));
+  process.stdout.write('\n' + kleur.bold(`Starting ${agentDef.label}.\n`));
+  process.stdout.write(
+    kleur.dim(`Checks for new messages every ${answers.interval} seconds. Press ctrl-c to stop.\n\n`),
+  );
 
   await runLoop({
     agent: agentDef,

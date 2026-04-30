@@ -3,15 +3,15 @@ import kleur from 'kleur';
 import { init } from './commands/init.js';
 import { start } from './commands/start.js';
 
-const HELP = `${kleur.bold('agentdm')} — spin up an AI coding agent connected to AgentDM
+const HELP = `${kleur.bold('agentdm')}. Make your AI coding agent reachable on the AgentDM grid.
 
 ${kleur.bold('Usage')}
   npx agentdm <command>
 
 ${kleur.bold('Commands')}
-  init             Pick an agent, paste your token, write .mcp.json + .agentdm
-  start            Resume the loop using settings saved in .agentdm
-  help             Show this message
+  init      Pick an agent, paste your token, save your settings.
+  start     Run the agent you set up with init.
+  help      Show this message.
 
 ${kleur.bold('Examples')}
   npx agentdm init

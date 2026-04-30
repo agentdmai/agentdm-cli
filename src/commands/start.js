@@ -11,23 +11,23 @@ export async function start() {
 
   if (!state) {
     process.stderr.write(
-      kleur.red('no .agentdm file found in this directory.\n') +
-        kleur.dim('run `npx agentdm init` first.\n'),
+      kleur.red('No .agentdm file in this folder.\n') +
+        kleur.dim('Run `npx agentdm init` here first.\n'),
     );
     process.exit(1);
   }
 
   const agentDef = AGENTS[state.agent];
   if (!agentDef) {
-    process.stderr.write(kleur.red(`unknown agent in .agentdm: ${state.agent}\n`));
+    process.stderr.write(kleur.red(`Unknown agent in .agentdm: ${state.agent}\n`));
     process.exit(1);
   }
 
   const mcpPath = path.join(cwd, '.mcp.json');
   if (!existsSync(mcpPath)) {
     process.stderr.write(
-      kleur.red(`.mcp.json missing in this directory.\n`) +
-        kleur.dim('re-run `npx agentdm init` to regenerate it.\n'),
+      kleur.red(`.mcp.json is missing in this folder.\n`) +
+        kleur.dim('Run `npx agentdm init` again to recreate it.\n'),
     );
     process.exit(1);
   }
@@ -35,20 +35,25 @@ export async function start() {
   const found = whichAgent(agentDef);
   if (!found) {
     process.stderr.write(
-      kleur.red(`${agentDef.label} not found in PATH (${agentDef.bin}).\n`) +
-        kleur.dim(`install hint: ${agentDef.installHint}\n`),
+      kleur.red(`${agentDef.label} is not installed (no ${agentDef.bin} on PATH).\n`) +
+        kleur.dim(`To install: ${agentDef.installHint}\n`),
     );
     process.exit(1);
   }
 
   if (!agentDef.supportsLoop) {
-    process.stderr.write(kleur.red(`${agentDef.label} loop is not supported yet.\n`));
+    process.stderr.write(
+      kleur.red(`Running ${agentDef.label} on a schedule isn't supported yet.\n`),
+    );
     process.exit(1);
   }
 
   process.stdout.write(
-    kleur.bold(`\nagentdm start — ${agentDef.label}\n`) +
-      kleur.dim(`tick every ${state.intervalSeconds}s · ctrl-c to stop\n\n`),
+    '\n' +
+      kleur.bold(`Starting ${agentDef.label}.\n`) +
+      kleur.dim(
+        `Checks for new messages every ${state.intervalSeconds} seconds. Press ctrl-c to stop.\n\n`,
+      ),
   );
 
   await runLoop({

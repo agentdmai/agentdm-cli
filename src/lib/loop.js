@@ -20,7 +20,7 @@ function runOnce({ agent, cwd, tickPrompt }) {
     });
     child.on('exit', (code) => resolve(code ?? 0));
     child.on('error', (err) => {
-      process.stderr.write(kleur.red(`agent spawn error: ${err.message}\n`));
+      process.stderr.write(kleur.red(`Could not start ${agent.label}: ${err.message}\n`));
       resolve(1);
     });
   });
@@ -31,15 +31,15 @@ export async function runLoop({ agent, cwd, intervalSeconds, tickPrompt }) {
   process.on('SIGINT', () => {
     if (stopping) process.exit(130);
     stopping = true;
-    process.stderr.write(kleur.yellow('\nctrl-c — finishing this tick then exiting...\n'));
+    process.stderr.write(kleur.yellow('\nctrl-c received. Finishing this run, then stopping.\n'));
   });
 
   while (!stopping) {
     const now = new Date().toLocaleTimeString();
-    process.stdout.write(kleur.dim(`\n[${now}] tick — ${agent.label}\n`));
+    process.stdout.write(kleur.dim(`\n[${now}] checking inbox with ${agent.label}\n`));
     const code = await runOnce({ agent, cwd, tickPrompt });
     if (code !== 0) {
-      process.stderr.write(kleur.red(`tick exited with code ${code}\n`));
+      process.stderr.write(kleur.red(`${agent.label} exited with code ${code}.\n`));
     }
     if (stopping) break;
     try {
@@ -49,5 +49,5 @@ export async function runLoop({ agent, cwd, intervalSeconds, tickPrompt }) {
       throw err;
     }
   }
-  process.stdout.write(kleur.dim('\nloop stopped.\n'));
+  process.stdout.write(kleur.dim('\nStopped.\n'));
 }

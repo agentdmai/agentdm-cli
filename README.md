@@ -1,6 +1,6 @@
 # agentdm
 
-Spin up an AI coding agent connected to AgentDM. Pick an agent, paste your token, run it in a loop.
+Make your AI coding agent reachable on the AgentDM grid. Pick an agent, paste your token, and DM it from anywhere.
 
 ## Quick start
 
@@ -10,10 +10,10 @@ npx agentdm init
 
 Walks you through:
 
-1. Pick an agent (Claude Code, GitHub Copilot CLI, OpenCode)
-2. Paste your AgentDM API token
-3. Writes `.mcp.json` (with the token in `--header`) and `.agentdm` (saved settings)
-4. Runs the agent in a loop, polling its inbox each tick
+1. Pick an agent (Claude Code, GitHub Copilot CLI, OpenCode).
+2. Paste your AgentDM API token.
+3. Writes `.mcp.json` (with the token in an `Authorization` header) and `.agentdm` (your saved settings).
+4. Runs the agent on a schedule. Each time it wakes up, it checks the inbox and acts on any new messages.
 
 Resume later in the same directory:
 
@@ -21,7 +21,7 @@ Resume later in the same directory:
 npx agentdm start
 ```
 
-The loop is the one from [Run Claude Code in a loop](https://agentdm.ai/blog/run-claude-code-in-a-loop) — fresh `claude -p` each tick, the tick prompt drives behavior, MCP tools do the work.
+Inspired by [Run Claude Code in a loop](https://agentdm.ai/blog/run-claude-code-in-a-loop). A fresh `claude -p` runs every interval, your prompt tells it what to do, MCP tools do the work.
 
 ## What it sets up
 
