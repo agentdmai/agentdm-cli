@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readdirSync, readFileSync, statSync, existsSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import kleur from 'kleur';
@@ -67,8 +68,31 @@ function cleanStaleLocks() {
   }
 }
 
+// mcp-remote keys cached OAuth state by md5(serverUrl). When the user picks
+// "Open browser to sign in", any cached token would silently bypass the browser
+// and the poll loop would time out waiting for a fresh token file. Wipe just
+// the entries for our URL so other servers' caches stay intact.
+function clearCachedAuthForAgentdm() {
+  const hash = createHash('md5').update(AGENTDM_MCP_URL).digest('hex');
+  for (const sub of listMcpRemoteSubdirs()) {
+    let entries;
+    try {
+      entries = readdirSync(sub);
+    } catch {
+      continue;
+    }
+    for (const f of entries) {
+      if (!f.startsWith(hash + '_')) continue;
+      try {
+        rmSync(path.join(sub, f), { force: true });
+      } catch {}
+    }
+  }
+}
+
 export async function loginViaOAuth() {
   cleanStaleLocks();
+  clearCachedAuthForAgentdm();
 
   const before = snapshotTokenFiles();
   const beforePaths = new Set(before.map((f) => f.path));
@@ -77,25 +101,37 @@ export async function loginViaOAuth() {
   const child = spawn('npx', ['-y', 'mcp-remote', AGENTDM_MCP_URL], {
     stdio: ['pipe', 'pipe', 'pipe'],
     env: process.env,
+    // Own process group so we can kill npx + its mcp-remote grandchild together.
+    detached: true,
   });
 
+  const debug = !!process.env.AGENTDM_DEBUG;
   let stopped = false;
   const stopChild = () => {
     if (stopped) return;
     stopped = true;
-    try {
-      child.stdin.end();
-    } catch {}
-    try {
-      child.kill('SIGTERM');
-    } catch {}
+    // Stop reading from the child so its remaining output can't ref the loop.
+    try { child.stdout?.removeAllListeners('data'); } catch {}
+    try { child.stderr?.removeAllListeners('data'); } catch {}
+    // Kill the whole process group (npx + mcp-remote grandchild) so neither
+    // lingers as an orphan holding the OAuth callback port.
+    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    try { child.kill('SIGKILL'); } catch {}
+    // Unref every handle the spawn created so the parent's event loop doesn't
+    // wait on them — close stdin (write end) so libuv can release that pipe,
+    // unref the read pipes, and unref the ChildProcess wrapper itself.
+    try { child.stdin?.end(); } catch {}
+    try { child.stdin?.unref(); } catch {}
+    try { child.stdout?.unref(); } catch {}
+    try { child.stderr?.unref(); } catch {}
+    try { child.unref(); } catch {}
   };
 
   let stdioReady = false;
   let urlPrinted = false;
   const onStderr = (buf) => {
     const text = buf.toString();
-    process.stderr.write(kleur.dim(text));
+    if (debug) process.stderr.write(kleur.dim(text));
     if (READY_RE.test(text)) stdioReady = true;
     if (!urlPrinted) {
       const matches = text.match(URL_RE) || [];
@@ -108,7 +144,7 @@ export async function loginViaOAuth() {
         urlPrinted = true;
         process.stderr.write(
           '\n' +
-            kleur.bold('If your browser didn\'t open, visit:\n  ') +
+            kleur.dim('If your browser didn\'t open, visit:\n  ') +
             kleur.cyan(authUrl) +
             '\n\n',
         );
@@ -117,9 +153,7 @@ export async function loginViaOAuth() {
   };
   child.stderr.on('data', onStderr);
   child.stdout.on('data', (buf) => {
-    if (process.env.AGENTDM_DEBUG) {
-      process.stderr.write(kleur.dim('[stdout] ' + buf.toString()));
-    }
+    if (debug) process.stderr.write(kleur.dim('[stdout] ' + buf.toString()));
   });
 
   const sigintHandler = () => stopChild();
