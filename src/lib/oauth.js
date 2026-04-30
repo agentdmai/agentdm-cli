@@ -10,7 +10,9 @@ const TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_MS = 500;
 const SETTLE_MS = 500;
 const STALE_LOCK_MS = 30 * 1000;
+const READY_TIMEOUT_MS = 60 * 1000;
 const URL_RE = /https?:\/\/[^\s'"`]+/g;
+const READY_RE = /Local STDIO server running|Proxy established/i;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -82,14 +84,19 @@ export async function loginViaOAuth() {
     if (stopped) return;
     stopped = true;
     try {
+      child.stdin.end();
+    } catch {}
+    try {
       child.kill('SIGTERM');
     } catch {}
   };
 
+  let stdioReady = false;
   let urlPrinted = false;
-  const onData = (buf) => {
+  const onStderr = (buf) => {
     const text = buf.toString();
     process.stderr.write(kleur.dim(text));
+    if (READY_RE.test(text)) stdioReady = true;
     if (!urlPrinted) {
       const matches = text.match(URL_RE) || [];
       const authUrl = matches.find(
@@ -108,8 +115,12 @@ export async function loginViaOAuth() {
       }
     }
   };
-  child.stdout.on('data', onData);
-  child.stderr.on('data', onData);
+  child.stderr.on('data', onStderr);
+  child.stdout.on('data', (buf) => {
+    if (process.env.AGENTDM_DEBUG) {
+      process.stderr.write(kleur.dim('[stdout] ' + buf.toString()));
+    }
+  });
 
   const sigintHandler = () => stopChild();
   process.once('SIGINT', sigintHandler);
@@ -122,6 +133,15 @@ export async function loginViaOAuth() {
   child.on('error', (err) => {
     exitError = err;
   });
+
+  const send = (msg) => {
+    if (!child.stdin.writable) return;
+    try {
+      child.stdin.write(JSON.stringify(msg) + '\n');
+    } catch {}
+  };
+
+  triggerAuth(child, () => stdioReady, send).catch(() => {});
 
   try {
     while (Date.now() - startedAt < TIMEOUT_MS) {
@@ -151,6 +171,30 @@ export async function loginViaOAuth() {
     process.removeListener('SIGINT', sigintHandler);
     stopChild();
   }
+}
+
+async function triggerAuth(child, isReady, send) {
+  const start = Date.now();
+  while (!isReady() && Date.now() - start < READY_TIMEOUT_MS) {
+    await sleep(200);
+    if (child.exitCode != null) return;
+  }
+  if (!isReady()) return;
+
+  send({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      clientInfo: { name: 'agentdm-cli', version: '0.3.0' },
+    },
+  });
+  await sleep(800);
+  send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  await sleep(300);
+  send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
 }
 
 function readTokens(filePath) {
