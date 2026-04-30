@@ -17,14 +17,12 @@ const ABORT = () => {
 export async function init() {
   process.stdout.write(kleur.bold('\nagentdm init\n'));
   process.stdout.write(
-    kleur.dim(
-      'Make your AI coding agent reachable on the AgentDM grid. Once it\'s running, you can DM it from Claude on the web or from any other agent on the grid.\n\n',
-    ),
+    kleur.dim('Set up a lightweight coding agent connected to AgentDM.\n\n'),
   );
 
   const cwd = process.cwd();
 
-  const answers = await prompts(
+  const choice = await prompts(
     [
       {
         type: 'select',
@@ -47,12 +45,36 @@ export async function init() {
         ],
         initial: 0,
       },
-      {
-        type: (prev) => (prev === 'token' ? 'password' : null),
-        name: 'token',
-        message: 'AgentDM API token (get one at https://agentdm.ai)',
-        validate: (v) => (v && v.trim().length > 0 ? true : 'token is required'),
-      },
+    ],
+    { onCancel: ABORT },
+  );
+
+  let token;
+  if (choice.authMethod === 'oauth') {
+    process.stdout.write(
+      '\n' +
+        kleur.bold('Opening your browser to sign in.\n') +
+        kleur.dim('Approve the request, then come back here.\n\n'),
+    );
+    token = await loginViaOAuth();
+    process.stdout.write(kleur.green('✓ signed in\n\n'));
+  } else {
+    const pasted = await prompts(
+      [
+        {
+          type: 'password',
+          name: 'token',
+          message: 'AgentDM API token (get one at https://agentdm.ai)',
+          validate: (v) => (v && v.trim().length > 0 ? true : 'token is required'),
+        },
+      ],
+      { onCancel: ABORT },
+    );
+    token = pasted.token.trim();
+  }
+
+  const settings = await prompts(
+    [
       {
         type: 'text',
         name: 'cwd',
@@ -84,21 +106,8 @@ export async function init() {
     { onCancel: ABORT },
   );
 
-  const agentDef = AGENTS[answers.agent];
-  const projectDir = path.resolve(answers.cwd);
-
-  let token;
-  if (answers.authMethod === 'oauth') {
-    process.stdout.write(
-      '\n' +
-        kleur.bold('Opening your browser to sign in.\n') +
-        kleur.dim('Approve the request, then come back here.\n\n'),
-    );
-    token = await loginViaOAuth();
-    process.stdout.write(kleur.green('✓ signed in\n'));
-  } else {
-    token = answers.token.trim();
-  }
+  const agentDef = AGENTS[choice.agent];
+  const projectDir = path.resolve(settings.cwd);
 
   process.stdout.write('\n');
   const found = whichAgent(agentDef);
@@ -123,8 +132,8 @@ export async function init() {
 
   const statePath = writeState(projectDir, {
     agent: agentDef.id,
-    intervalSeconds: answers.interval,
-    tickPrompt: answers.tickPrompt,
+    intervalSeconds: settings.interval,
+    tickPrompt: settings.tickPrompt,
   });
   process.stdout.write(kleur.green(`✓ saved your settings to ${statePath}\n`));
 
@@ -134,7 +143,7 @@ export async function init() {
       kleur.dim('your token is saved in .mcp.json. If this folder is a git repo, add it to .gitignore.\n'),
   );
 
-  if (!answers.startNow) {
+  if (!settings.startNow) {
     process.stdout.write('\n' + kleur.bold('Done.') + kleur.dim(' Run it later from this folder:\n'));
     process.stdout.write(kleur.cyan('  npx agentdm start\n'));
     return;
@@ -157,13 +166,13 @@ export async function init() {
 
   process.stdout.write('\n' + kleur.bold(`Starting ${agentDef.label}.\n`));
   process.stdout.write(
-    kleur.dim(`Checks for new messages every ${answers.interval} seconds. Press ctrl-c to stop.\n\n`),
+    kleur.dim(`Checks for new messages every ${settings.interval} seconds. Press ctrl-c to stop.\n\n`),
   );
 
   await runLoop({
     agent: agentDef,
     cwd: projectDir,
-    intervalSeconds: answers.interval,
-    tickPrompt: answers.tickPrompt,
+    intervalSeconds: settings.interval,
+    tickPrompt: settings.tickPrompt,
   });
 }
