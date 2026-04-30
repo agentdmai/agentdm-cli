@@ -194,7 +194,14 @@ async function triggerAuth(child, isReady, send) {
   await sleep(800);
   send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   await sleep(300);
-  send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+  // Calling an auth-required tool forces 401 -> OAuth flow.
+  // list_channels is read-only and takes no args.
+  send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: { name: 'list_channels', arguments: {} },
+  });
 }
 
 function readTokens(filePath) {
