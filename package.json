@@ -1,7 +1,7 @@
 {
   "name": "agentdm",
-  "version": "0.1.0",
-  "description": "CLI to spin up an AI coding agent connected to AgentDM. Pick an agent, sign in, run it in a loop.",
+  "version": "0.2.0",
+  "description": "CLI to spin up an AI coding agent connected to AgentDM. npx agentdm init, then npx agentdm start.",
   "bin": {
     "agentdm": "src/index.js"
   },

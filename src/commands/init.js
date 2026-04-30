@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import prompts from 'prompts';
 import kleur from 'kleur';
 import { writeMcpConfig } from '../lib/mcp-config.js';
-import { runOauth } from '../lib/oauth.js';
+import { writeState } from '../lib/state.js';
 import { runLoop } from '../lib/loop.js';
 import { whichAgent, AGENTS } from '../lib/agents.js';
 
@@ -13,9 +13,11 @@ const ABORT = () => {
   throw err;
 };
 
-export async function createAgent() {
-  process.stdout.write(kleur.bold('\nagentdm — create agent\n'));
-  process.stdout.write(kleur.dim('Set up an AI coding agent that runs in a loop and is reachable on the AgentDM grid.\n\n'));
+export async function init() {
+  process.stdout.write(kleur.bold('\nagentdm — init\n'));
+  process.stdout.write(
+    kleur.dim('Set up an AI coding agent that runs in a loop and is reachable on the AgentDM grid.\n\n'),
+  );
 
   const cwd = process.cwd();
 
@@ -33,10 +35,10 @@ export async function createAgent() {
         initial: 0,
       },
       {
-        type: 'confirm',
-        name: 'oauth',
-        message: 'Sign in to AgentDM now (OAuth in browser)?',
-        initial: true,
+        type: 'password',
+        name: 'token',
+        message: 'AgentDM API token (get one at https://agentdm.ai)',
+        validate: (v) => (v && v.trim().length > 0 ? true : 'token is required'),
       },
       {
         type: 'text',
@@ -59,6 +61,12 @@ export async function createAgent() {
         initial:
           'Call read_messages on agentdm. For every message, follow the instructions and reply when done. If the inbox is empty, exit quietly.',
       },
+      {
+        type: 'confirm',
+        name: 'startNow',
+        message: 'Start the loop now?',
+        initial: true,
+      },
     ],
     { onCancel: ABORT },
   );
@@ -76,25 +84,39 @@ export async function createAgent() {
   }
 
   const mcpPath = path.join(projectDir, '.mcp.json');
-  const result = writeMcpConfig(mcpPath);
-  if (result.created) process.stdout.write(kleur.green(`✓ wrote ${mcpPath}\n`));
-  else if (result.added) process.stdout.write(kleur.green(`✓ added agentdm to ${mcpPath}\n`));
-  else process.stdout.write(kleur.dim(`  agentdm already configured in ${mcpPath}\n`));
-
-  if (answers.oauth) {
-    process.stdout.write('\n' + kleur.bold('Signing in to AgentDM...\n'));
-    process.stdout.write(kleur.dim('A browser tab will open. Approve, then come back.\n\n'));
-    await runOauth();
-    process.stdout.write(kleur.green('✓ signed in\n'));
+  const mcpResult = writeMcpConfig(mcpPath, answers.token.trim());
+  if (mcpResult.created) {
+    process.stdout.write(kleur.green(`✓ wrote ${mcpPath}\n`));
+  } else if (mcpResult.replaced) {
+    process.stdout.write(kleur.green(`✓ updated agentdm entry in ${mcpPath}\n`));
   } else {
-    process.stdout.write(
-      kleur.dim('  skipping OAuth — sign in will happen on first MCP tool call.\n'),
-    );
+    process.stdout.write(kleur.green(`✓ added agentdm entry to ${mcpPath}\n`));
+  }
+
+  const statePath = writeState(projectDir, {
+    agent: agentDef.id,
+    intervalSeconds: answers.interval,
+    tickPrompt: answers.tickPrompt,
+  });
+  process.stdout.write(kleur.green(`✓ wrote ${statePath}\n`));
+
+  process.stdout.write(
+    '\n' +
+      kleur.yellow('note: ') +
+      kleur.dim('your token lives in .mcp.json — add it to .gitignore if this dir is a repo.\n'),
+  );
+
+  if (!answers.startNow) {
+    process.stdout.write('\n' + kleur.bold('Done. ') + kleur.dim('Start the loop later with:\n'));
+    process.stdout.write(kleur.cyan('  npx agentdm start\n'));
+    return;
   }
 
   if (!found) {
-    process.stdout.write(kleur.yellow('\nagent CLI is not installed; not starting the loop.\n'));
-    process.stdout.write(kleur.dim(`once installed, re-run:  npx agentdm create agent\n`));
+    process.stdout.write(
+      kleur.yellow('\nagent CLI is not installed; not starting the loop.\n'),
+    );
+    process.stdout.write(kleur.dim(`once installed:  npx agentdm start\n`));
     return;
   }
 

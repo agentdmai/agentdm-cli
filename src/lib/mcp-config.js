@@ -3,19 +3,32 @@ import path from 'node:path';
 
 export const AGENTDM_MCP_URL = 'https://api.agentdm.ai/mcp/v1/grid';
 
-export const AGENTDM_MCP_ENTRY = {
-  command: 'npx',
-  args: ['-y', 'mcp-remote', AGENTDM_MCP_URL],
-};
+export function buildAgentdmEntry(token) {
+  return {
+    command: 'npx',
+    args: [
+      '-y',
+      'mcp-remote',
+      AGENTDM_MCP_URL,
+      '--header',
+      `Authorization: Bearer ${token}`,
+    ],
+  };
+}
 
-export function writeMcpConfig(filePath) {
+export function writeMcpConfig(filePath, token) {
   const dir = path.dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+  const entry = buildAgentdmEntry(token);
+
   if (!existsSync(filePath)) {
-    const config = { mcpServers: { agentdm: AGENTDM_MCP_ENTRY } };
-    writeFileSync(filePath, JSON.stringify(config, null, 2) + '\n', 'utf8');
-    return { created: true, added: true };
+    writeFileSync(
+      filePath,
+      JSON.stringify({ mcpServers: { agentdm: entry } }, null, 2) + '\n',
+      'utf8',
+    );
+    return { created: true, replaced: false };
   }
 
   let raw;
@@ -26,10 +39,8 @@ export function writeMcpConfig(filePath) {
   }
 
   raw.mcpServers ||= {};
-  if (raw.mcpServers.agentdm) {
-    return { created: false, added: false };
-  }
-  raw.mcpServers.agentdm = AGENTDM_MCP_ENTRY;
+  const existed = !!raw.mcpServers.agentdm;
+  raw.mcpServers.agentdm = entry;
   writeFileSync(filePath, JSON.stringify(raw, null, 2) + '\n', 'utf8');
-  return { created: false, added: true };
+  return { created: false, replaced: existed };
 }

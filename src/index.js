@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import kleur from 'kleur';
-import { createAgent } from './commands/create-agent.js';
+import { init } from './commands/init.js';
+import { start } from './commands/start.js';
 
 const HELP = `${kleur.bold('agentdm')} — spin up an AI coding agent connected to AgentDM
 
@@ -8,20 +9,23 @@ ${kleur.bold('Usage')}
   npx agentdm <command>
 
 ${kleur.bold('Commands')}
-  create agent     Pick an agent, sign in, write .mcp.json, run it in a loop
+  init             Pick an agent, paste your token, write .mcp.json + .agentdm
+  start            Resume the loop using settings saved in .agentdm
   help             Show this message
 
 ${kleur.bold('Examples')}
-  npx agentdm create agent
+  npx agentdm init
+  npx agentdm start
 `;
 
 function parse(argv) {
   const args = argv.slice(2);
   if (args.length === 0) return { cmd: 'help' };
-  const [a, b] = args;
+  const a = args[0];
   if (a === 'help' || a === '--help' || a === '-h') return { cmd: 'help' };
   if (a === 'version' || a === '--version' || a === '-v') return { cmd: 'version' };
-  if (a === 'create' && b === 'agent') return { cmd: 'create-agent', rest: args.slice(2) };
+  if (a === 'init') return { cmd: 'init' };
+  if (a === 'start') return { cmd: 'start' };
   return { cmd: 'unknown', input: args.join(' ') };
 }
 
@@ -36,8 +40,11 @@ async function main() {
       process.stdout.write(`${pkg.version}\n`);
       return;
     }
-    case 'create-agent':
-      await createAgent();
+    case 'init':
+      await init();
+      return;
+    case 'start':
+      await start();
       return;
     case 'unknown':
       process.stderr.write(kleur.red(`unknown command: ${input}\n\n`));
