@@ -3,26 +3,14 @@ import path from 'node:path';
 
 export const AGENTDM_MCP_URL = 'https://api.agentdm.ai/mcp/v1/grid';
 
+// When token is null/undefined, mcp-remote handles OAuth itself (refreshing
+// from ~/.mcp-auth). When a static API token is supplied, embed it as a header.
 export function buildAgentdmRemoteEntry(token) {
-  return {
-    command: 'npx',
-    args: [
-      '-y',
-      'mcp-remote',
-      AGENTDM_MCP_URL,
-      '--header',
-      `Authorization: Bearer ${token}`,
-    ],
-  };
-}
-
-export function buildAgentdmHttpEntry(token) {
-  return {
-    url: AGENTDM_MCP_URL,
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  };
+  const args = ['-y', 'mcp-remote', AGENTDM_MCP_URL];
+  if (token) {
+    args.push('--header', `Authorization: Bearer ${token}`);
+  }
+  return { command: 'npx', args };
 }
 
 export function writeAgentdmEntry(filePath, entry) {
@@ -54,8 +42,4 @@ export function writeAgentdmEntry(filePath, entry) {
 
 export function writeMcpConfig(filePath, token) {
   return writeAgentdmEntry(filePath, buildAgentdmRemoteEntry(token));
-}
-
-export function writeMcpConfigHttp(filePath, token) {
-  return writeAgentdmEntry(filePath, buildAgentdmHttpEntry(token));
 }

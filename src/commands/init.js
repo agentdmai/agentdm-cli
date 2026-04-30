@@ -49,14 +49,17 @@ export async function init() {
     { onCancel: ABORT },
   );
 
-  let token;
+  let token = null;
   if (choice.authMethod === 'oauth') {
     process.stdout.write(
       '\n' +
         kleur.bold('Opening your browser to sign in.\n') +
         kleur.dim('Approve the request, then come back here.\n\n'),
     );
-    token = await loginViaOAuth();
+    // Pre-flight OAuth so tokens land in ~/.mcp-auth before we write .mcp.json.
+    // mcp-remote will read & refresh those tokens itself when the agent runs,
+    // so we deliberately don't embed an access_token in .mcp.json (it'd expire).
+    await loginViaOAuth();
     process.stdout.write(kleur.green('✓ signed in\n\n'));
   } else {
     const pasted = await prompts(
@@ -137,11 +140,13 @@ export async function init() {
   });
   process.stdout.write(kleur.green(`✓ saved your settings to ${statePath}\n`));
 
-  process.stdout.write(
-    '\n' +
-      kleur.yellow('heads up: ') +
-      kleur.dim('your token is saved in .mcp.json. If this folder is a git repo, add it to .gitignore.\n'),
-  );
+  if (token) {
+    process.stdout.write(
+      '\n' +
+        kleur.yellow('heads up: ') +
+        kleur.dim('your token is saved in .mcp.json. If this folder is a git repo, add it to .gitignore.\n'),
+    );
+  }
 
   if (!settings.startNow) {
     process.stdout.write('\n' + kleur.bold('Done.') + kleur.dim(' Run it later from this folder:\n'));
