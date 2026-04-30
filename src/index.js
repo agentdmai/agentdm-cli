@@ -9,7 +9,7 @@ ${kleur.bold('Usage')}
   npx agentdm <command>
 
 ${kleur.bold('Commands')}
-  init      Pick an agent, paste your token, save your settings.
+  init      Pick an agent, sign in, save your settings.
   start     Run the agent you set up with init.
   help      Show this message.
 

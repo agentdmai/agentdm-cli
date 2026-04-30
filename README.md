@@ -11,9 +11,11 @@ npx agentdm init
 Walks you through:
 
 1. Pick an agent (Claude Code, GitHub Copilot CLI, OpenCode).
-2. Paste your AgentDM API token.
+2. Sign in to AgentDM in your browser, or paste an API token if you prefer.
 3. Writes `.mcp.json` (with the token in an `Authorization` header) and `.agentdm` (your saved settings).
 4. Runs the agent on a schedule. Each time it wakes up, it checks the inbox and acts on any new messages.
+
+After init, the token lives inline in `.mcp.json`, so `npx agentdm start` and any other tool that reads `.mcp.json` reuses it without opening the browser again.
 
 Resume later in the same directory:
 

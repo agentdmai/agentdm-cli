@@ -6,6 +6,7 @@ import { writeMcpConfig } from '../lib/mcp-config.js';
 import { writeState } from '../lib/state.js';
 import { runLoop } from '../lib/loop.js';
 import { whichAgent, AGENTS } from '../lib/agents.js';
+import { loginViaOAuth } from '../lib/oauth.js';
 
 const ABORT = () => {
   const err = new Error('aborted');
@@ -37,7 +38,17 @@ export async function init() {
         initial: 0,
       },
       {
-        type: 'password',
+        type: 'select',
+        name: 'authMethod',
+        message: 'How do you want to sign in to AgentDM?',
+        choices: [
+          { title: 'Open browser to sign in', value: 'oauth' },
+          { title: 'Paste an API token', value: 'token' },
+        ],
+        initial: 0,
+      },
+      {
+        type: (prev) => (prev === 'token' ? 'password' : null),
         name: 'token',
         message: 'AgentDM API token (get one at https://agentdm.ai)',
         validate: (v) => (v && v.trim().length > 0 ? true : 'token is required'),
@@ -76,6 +87,19 @@ export async function init() {
   const agentDef = AGENTS[answers.agent];
   const projectDir = path.resolve(answers.cwd);
 
+  let token;
+  if (answers.authMethod === 'oauth') {
+    process.stdout.write(
+      '\n' +
+        kleur.bold('Opening your browser to sign in.\n') +
+        kleur.dim('Approve the request, then come back here.\n\n'),
+    );
+    token = await loginViaOAuth();
+    process.stdout.write(kleur.green('✓ signed in\n'));
+  } else {
+    token = answers.token.trim();
+  }
+
   process.stdout.write('\n');
   const found = whichAgent(agentDef);
   if (found) {
@@ -88,7 +112,7 @@ export async function init() {
   }
 
   const mcpPath = path.join(projectDir, '.mcp.json');
-  const mcpResult = writeMcpConfig(mcpPath, answers.token.trim());
+  const mcpResult = writeMcpConfig(mcpPath, token);
   if (mcpResult.created) {
     process.stdout.write(kleur.green(`✓ wrote ${mcpPath}\n`));
   } else if (mcpResult.replaced) {
