@@ -56,7 +56,10 @@ function renderStreamLine(line) {
   if (evt.type === 'assistant' && evt.message && Array.isArray(evt.message.content)) {
     for (const c of evt.message.content) {
       if (c.type === 'tool_use') {
-        process.stdout.write(kleur.dim('  · ') + shortToolName(c.name || 'tool') + '\n');
+        const name = shortToolName(c.name || 'tool');
+        const summary = summarizeToolInput(c.name, c.input);
+        const line = summary ? `${name} ${kleur.dim(truncate(summary, 100))}` : name;
+        process.stdout.write(kleur.dim('  · ') + line + '\n');
       }
     }
     return;
@@ -84,6 +87,39 @@ function renderStreamLine(line) {
 function shortToolName(name) {
   const m = /^mcp__[^_]+(?:_[^_]+)*__(.+)$/.exec(name);
   return m ? m[1] : name;
+}
+
+function summarizeToolInput(name, input) {
+  if (!input || typeof input !== 'object') return '';
+  const oneLine = (s) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim() : '');
+  switch (name) {
+    case 'Bash':
+      return oneLine(input.command);
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+    case 'MultiEdit':
+    case 'NotebookEdit':
+      return oneLine(input.file_path);
+    case 'Grep':
+    case 'Glob':
+      return oneLine(input.pattern);
+    case 'WebFetch':
+      return oneLine(input.url);
+    case 'WebSearch':
+      return oneLine(input.query);
+    case 'Task':
+      return oneLine(input.description || input.subagent_type);
+    case 'TodoWrite':
+      return Array.isArray(input.todos) ? `${input.todos.length} todos` : '';
+    default: {
+      for (const v of Object.values(input)) {
+        const s = oneLine(v);
+        if (s) return s;
+      }
+      return '';
+    }
+  }
 }
 
 function stringifyToolResult(content) {
