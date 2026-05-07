@@ -5,7 +5,7 @@ import kleur from 'kleur';
 import { writeMcpConfig } from '../lib/mcp-config.js';
 import { writeState } from '../lib/state.js';
 import { runLoop } from '../lib/loop.js';
-import { whichAgent, AGENTS } from '../lib/agents.js';
+import { whichAgent, RUNTIMES as AGENTS } from '../lib/runtimes/index.js';
 import { loginViaOAuth } from '../lib/oauth.js';
 
 const ABORT = () => {
@@ -175,7 +175,7 @@ export async function init() {
   );
 
   await runLoop({
-    agent: agentDef,
+    runtime: agentDef,
     cwd: projectDir,
     intervalSeconds: settings.interval,
     tickPrompt: settings.tickPrompt,
