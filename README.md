@@ -54,6 +54,70 @@ Other entries in `.mcp.json` are preserved.
 
 Inspired by [Run Claude Code in a loop](https://agentdm.ai/blog/run-claude-code-in-a-loop). A fresh `claude -p` runs every interval, your prompt tells it what to do, and MCP tools do the work.
 
+## Running multiple agents from a parent supervisor
+
+The CLI can also be driven by a parent process that manages many agents at once (e.g. a dashboard with start/stop/wake buttons). Set `AGENTDM_SUPERVISED=1` in the child env and pass the agent's working directory:
+
+```bash
+AGENTDM_SUPERVISED=1 RUNTIME=claude npx agentdm start /path/to/agent
+```
+
+In supervised mode the loop:
+
+- Keeps a single `claude` process alive across ticks (warm session). A `/clear` between tasks wipes conversation history but keeps MCP connections, skills, and `CLAUDE.md` cached.
+- Adapts the sleep interval. After a productive tick (the agent touches `.orchestrator/did-work`) the wrapper sleeps `MIN_SLEEP` seconds. Idle ticks add `IDLE_STEP` up to `MAX_SLEEP`.
+- Wakes on `SIGUSR1`. The supervisor sends one to interrupt the current sleep and run a tick immediately.
+- Reports state through `<agentDir>/.orchestrator/`:
+  - `sleep.json` — current sleep state for the dashboard's badge.
+  - `agent-loop.log` — wrapper narration plus `claude` stderr, ready to tail.
+  - `tools.json` — written by the agent, names of every MCP tool it can see.
+  - `did-work` / `clear-session` / `reset-session` — flags the agent or supervisor touches to steer the loop.
+  - `usage.jsonl` — per-tick token counts (Copilot only).
+- Reports per-tick token usage and estimated USD cost (Claude only) as a single log line by reading `~/.claude/projects/<slug>/*.jsonl`.
+
+### Environment variables (supervised mode)
+
+| Var                      | Default            | Effect                                                                      |
+| ------------------------ | ------------------ | --------------------------------------------------------------------------- |
+| `AGENTDM_SUPERVISED`     | unset              | `1` activates supervised mode.                                              |
+| `RUNTIME`                | `claude`           | `claude` or `copilot`.                                                      |
+| `MIN_SLEEP`              | `60`               | Seconds after a productive tick.                                            |
+| `IDLE_STEP`              | `60`               | Added to sleep on each idle tick.                                           |
+| `MAX_SLEEP`              | `3600`             | Ceiling on idle backoff.                                                    |
+| `TIMEOUT_SECS`           | `600`              | Hard cap on a single turn.                                                  |
+| `STATE_DIR`              | `.orchestrator`    | Sub-directory inside the agent dir for control + log files.                 |
+| `CHROME`                 | unset              | `1` passes `--chrome` to Claude Code (headed Claude-in-Chrome session).     |
+| `CLAUDE_MODEL`           | unset              | `--model` override for Claude Code.                                         |
+| `CLAUDE_INCLUDE_PARTIAL` | unset              | `1` passes `--include-partial-messages` to Claude Code.                     |
+| `CLEAR_MIN_GAP`          | `600`              | Minimum seconds between `/clear` calls (Claude only).                       |
+| `COPILOT_MODEL`          | unset              | `--model` override for Copilot CLI.                                         |
+| `COPILOT_REASONING`      | unset              | `--effort` override for Copilot CLI (`low` / `medium` / `high` / `xhigh`).  |
+
+### `.agentdm` v2 (optional)
+
+Schema v2 adds optional fields. v1 files keep working unchanged.
+
+```json
+{
+  "version": 2,
+  "agent": "claude",
+  "intervalSeconds": 60,
+  "tickPrompt": "...",
+  "fullTickPrompt": "...",
+  "lightTickPrompt": "...",
+  "stateDir": ".orchestrator",
+  "backoff": { "minSeconds": 60, "stepSeconds": 60, "maxSeconds": 3600 },
+  "timeoutSeconds": 600,
+  "skillIsolation": true,
+  "lifecycleHooks": true,
+  "trackCost": true,
+  "claude": { "model": null, "chrome": false, "clearMinGapSeconds": 600, "extraArgs": [] },
+  "copilot": { "model": null, "reasoning": null }
+}
+```
+
+End-user `npx agentdm start` uses `tickPrompt` and `intervalSeconds` and ignores the rest.
+
 ## Example: DM your agent from the web
 
 In one terminal:

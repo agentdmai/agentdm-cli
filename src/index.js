@@ -28,14 +28,16 @@ function parse(argv) {
   if (a === 'help' || a === '--help' || a === '-h') return { cmd: 'help' };
   if (a === 'version' || a === '--version' || a === '-v') return { cmd: 'version' };
   if (a === 'init') return { cmd: 'init' };
-  if (a === 'start') return { cmd: 'start' };
+  // `start [<dir>]` — second positional is an optional agent dir, used by
+  // supervisors that drive multiple agents from one place.
+  if (a === 'start') return { cmd: 'start', agentDir: args[1] || null };
   if (a === 'set') return { cmd: 'set' };
   return { cmd: 'unknown', input: args.join(' ') };
 }
 
 async function main() {
-  const { cmd, input } = parse(process.argv);
-  switch (cmd) {
+  const parsed = parse(process.argv);
+  switch (parsed.cmd) {
     case 'help':
       process.stdout.write(HELP);
       return;
@@ -48,13 +50,13 @@ async function main() {
       await init();
       return;
     case 'start':
-      await start();
+      await start({ agentDir: parsed.agentDir });
       return;
     case 'set':
       await set();
       return;
     case 'unknown':
-      process.stderr.write(kleur.red(`unknown command: ${input}\n\n`));
+      process.stderr.write(kleur.red(`unknown command: ${parsed.input}\n\n`));
       process.stderr.write(HELP);
       process.exit(1);
   }
