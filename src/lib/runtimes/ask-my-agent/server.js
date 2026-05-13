@@ -58,7 +58,68 @@ function extractMessages(callToolResult) {
   return [];
 }
 
-async function handleOne(msg, provider, tools, agentdm, log) {
+/**
+ * Flatten an MCP CallToolResult into a text string the LLM can read back
+ * as a tool result. Concatenates every text block; falls back to a
+ * JSON.stringify of the whole result for non-text content.
+ */
+export function extractToolText(callToolResult) {
+  if (callToolResult?.isError) {
+    const errText = extractTextBlocks(callToolResult);
+    return `Tool reported error: ${errText || 'unknown'}`;
+  }
+  const text = extractTextBlocks(callToolResult);
+  if (text) return text;
+  try {
+    return JSON.stringify(callToolResult ?? {});
+  } catch {
+    return '';
+  }
+}
+
+function extractTextBlocks(result) {
+  const blocks = result?.content ?? [];
+  const texts = [];
+  for (const b of blocks) {
+    if (b?.type === 'text' && typeof b.text === 'string' && b.text) {
+      texts.push(b.text);
+    }
+  }
+  return texts.join('\n');
+}
+
+/**
+ * Build the tool-dispatcher the providers call when the LLM emits a
+ * tool_use. Tool names are prefixed `agentdm__` or `gh__`; the prefix
+ * routes to the matching MCP session. Returns text suitable for feeding
+ * back into the LLM as a tool_result.
+ */
+export function buildCallTool({ agentdm, github }) {
+  return async (rawName, input) => {
+    if (typeof rawName !== 'string') {
+      throw new Error('tool name must be a string');
+    }
+    const args = input && typeof input === 'object' ? input : {};
+    if (rawName.startsWith('agentdm__')) {
+      const name = rawName.slice('agentdm__'.length);
+      const result = await agentdm.callTool({ name, arguments: args });
+      return extractToolText(result);
+    }
+    if (rawName.startsWith('gh__')) {
+      if (!github) {
+        throw new Error(
+          'GitHub MCP is not configured for this runner. Re-run init with GitHub access enabled.',
+        );
+      }
+      const name = rawName.slice('gh__'.length);
+      const result = await github.callTool({ name, arguments: args });
+      return extractToolText(result);
+    }
+    throw new Error(`Unknown tool prefix: ${rawName}`);
+  };
+}
+
+async function handleOne(msg, provider, tools, agentdm, callTool, log) {
   const replyTo = msg?.reply_to;
   const messageText = msg?.message;
   if (typeof replyTo !== 'string' || typeof messageText !== 'string') {
@@ -72,13 +133,18 @@ async function handleOne(msg, provider, tools, agentdm, log) {
   const messages = [{ role: 'user', content: messageText }];
   const chunks = [];
   try {
-    for await (const evt of provider.chat(messages, tools)) {
+    for await (const evt of provider.chat(messages, tools, callTool)) {
       if (evt.type === 'token' && typeof evt.delta === 'string') {
         chunks.push(evt.delta);
-      } else if (evt.type === 'tool_call') {
-        // v1 stub: log tool calls; future patch routes gh_* back to the
-        // github-mcp-server session and feeds results in.
-        log(`[tool] ${JSON.stringify(evt.tool_call)}`);
+      } else if (evt.type === 'tool_use') {
+        // Log every tool call + result for visibility. The provider has
+        // already executed the call via the callTool callback by the time
+        // this event fires.
+        const preview =
+          typeof evt.result === 'string' && evt.result.length > 200
+            ? `${evt.result.slice(0, 200)}…`
+            : evt.result;
+        log(`[tool] ${evt.name} input=${JSON.stringify(evt.input)} → ${preview}`);
       }
     }
   } catch (err) {
@@ -130,6 +196,11 @@ export async function runAskMyAgent({
   });
   log(`[runner] online. Tools: ${sessions.tools.length}.`);
 
+  const callTool = buildCallTool({
+    agentdm: sessions.agentdm,
+    github: sessions.github,
+  });
+
   let inFlight = Promise.resolve();
   let stopped = false;
 
@@ -155,7 +226,14 @@ export async function runAskMyAgent({
       log(`[wake:${source}] ${messages.length} message(s)`);
       for (const msg of messages) {
         if (stopped) return;
-        await handleOne(msg, provider, sessions.tools, sessions.agentdm, log);
+        await handleOne(
+          msg,
+          provider,
+          sessions.tools,
+          sessions.agentdm,
+          callTool,
+          log,
+        );
       }
     })();
     await inFlight;
