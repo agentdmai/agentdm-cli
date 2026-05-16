@@ -90,11 +90,21 @@ function extractTextBlocks(result) {
 
 /**
  * Build the tool-dispatcher the providers call when the LLM emits a
- * tool_use. Tool names are prefixed `agentdm__` or `gh__`; the prefix
- * routes to the matching MCP session. Returns text suitable for feeding
- * back into the LLM as a tool_result.
+ * tool_use. Tool names are prefixed with the source ("agentdm__", "gh__",
+ * "<custom>__") — the prefix maps to the corresponding MCP session.
+ * Returns text suitable for feeding back into the LLM as a tool_result.
+ *
+ * @param {{
+ *   agentdm: import('@modelcontextprotocol/sdk/client/index.js').Client,
+ *   toolSessions: Record<string, import('@modelcontextprotocol/sdk/client/index.js').Client>,
+ *   toolDescriptors: Record<string, { id: string, toolPrefix?: string }>,
+ * }} args
  */
-export function buildCallTool({ agentdm, github }) {
+export function buildCallTool({ agentdm, toolSessions = {}, toolDescriptors = {} }) {
+  const prefixToToolId = new Map();
+  for (const [id, def] of Object.entries(toolDescriptors)) {
+    prefixToToolId.set(def.toolPrefix || id, id);
+  }
   return async (rawName, input) => {
     if (typeof rawName !== 'string') {
       throw new Error('tool name must be a string');
@@ -105,21 +115,26 @@ export function buildCallTool({ agentdm, github }) {
       const result = await agentdm.callTool({ name, arguments: args });
       return extractToolText(result);
     }
-    if (rawName.startsWith('gh__')) {
-      if (!github) {
+    const splitIdx = rawName.indexOf('__');
+    if (splitIdx > 0) {
+      const prefix = rawName.slice(0, splitIdx);
+      const id = prefixToToolId.get(prefix);
+      const session = id ? toolSessions[id] : null;
+      if (!session) {
         throw new Error(
-          'GitHub MCP is not configured for this runner. Re-run init with GitHub access enabled.',
+          `Tool prefix "${prefix}" is not registered for this runner. ` +
+            'Re-run init and enable the corresponding tool.',
         );
       }
-      const name = rawName.slice('gh__'.length);
-      const result = await github.callTool({ name, arguments: args });
+      const name = rawName.slice(splitIdx + 2);
+      const result = await session.callTool({ name, arguments: args });
       return extractToolText(result);
     }
-    throw new Error(`Unknown tool prefix: ${rawName}`);
+    throw new Error(`Unknown tool name shape: ${rawName}`);
   };
 }
 
-async function handleOne(msg, provider, tools, agentdm, callTool, log) {
+async function handleOne(msg, provider, tools, agentdm, callTool, log, systemPrompt) {
   const replyTo = msg?.reply_to;
   const messageText = msg?.message;
   if (typeof replyTo !== 'string' || typeof messageText !== 'string') {
@@ -130,7 +145,9 @@ async function handleOne(msg, provider, tools, agentdm, callTool, log) {
   const user = msg.user ?? 'unknown';
   log(`[recv] channel=${channel} from=${user} reply_to=${replyTo}`);
 
-  const messages = [{ role: 'user', content: messageText }];
+  const messages = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  messages.push({ role: 'user', content: messageText });
   const chunks = [];
   try {
     for await (const evt of provider.chat(messages, tools, callTool)) {
@@ -180,7 +197,8 @@ export async function runAskMyAgent({
   agentdmUrl = DEFAULT_GRID_URL,
   agentdmApiKey,
   wakeUrl,
-  githubPat,
+  enabledTools = [],
+  userSystemPrompt = '',
   provider,
   fallbackPollMs = 60_000,
   log = (m) => process.stderr.write(`${m}\n`),
@@ -192,13 +210,21 @@ export async function runAskMyAgent({
   const sessions = await openSessions({
     agentdmUrl,
     agentdmApiKey,
-    githubPat,
+    enabledTools,
   });
   log(`[runner] online. Tools: ${sessions.tools.length}.`);
 
+  // Assemble the system prompt: user-configured role + capabilities first,
+  // tool-derived constraints (from describeFor) after.
+  const systemPrompt =
+    [userSystemPrompt.trim(), ...(sessions.toolSystemLines || [])]
+      .filter(Boolean)
+      .join('\n') || null;
+
   const callTool = buildCallTool({
     agentdm: sessions.agentdm,
-    github: sessions.github,
+    toolSessions: sessions.toolSessions,
+    toolDescriptors: sessions.toolDescriptors,
   });
 
   let inFlight = Promise.resolve();
@@ -233,6 +259,7 @@ export async function runAskMyAgent({
           sessions.agentdm,
           callTool,
           log,
+          systemPrompt,
         );
       }
     })();

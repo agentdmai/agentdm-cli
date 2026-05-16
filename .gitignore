@@ -4,3 +4,6 @@ node_modules
 .env
 .env.local
 package-lock.json
+.agentdm
+.mcp.json
+AGENTS.md
