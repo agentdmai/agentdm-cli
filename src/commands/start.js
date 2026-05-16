@@ -25,6 +25,7 @@ import {
 } from '../lib/state.js';
 import { runLoop } from '../lib/loop.js';
 import { RUNTIMES, whichAgent } from '../lib/runtimes/index.js';
+import { modelEnvName } from '../lib/provider-model.js';
 
 function isTruthyEnv(v) {
   if (!v) return false;
@@ -50,10 +51,22 @@ export async function start(argv = {}) {
     process.exit(1);
   }
 
-  const state = readState(cwd);
+  // Containers (Railway, Fly, etc.) don't ship a .agentdm — let the deploy
+  // wizard pack the same shape into AGENTDM_STATE_JSON instead.
+  let state = readState(cwd);
+  if (!state && process.env.AGENTDM_STATE_JSON) {
+    try {
+      state = JSON.parse(process.env.AGENTDM_STATE_JSON);
+    } catch (err) {
+      process.stderr.write(
+        kleur.red(`AGENTDM_STATE_JSON is set but not valid JSON: ${err.message}\n`),
+      );
+      process.exit(1);
+    }
+  }
   if (!state && !supervised) {
     process.stderr.write(
-      kleur.red('No .agentdm file in this folder.\n') +
+      kleur.red('No .agentdm file in this folder and no AGENTDM_STATE_JSON env.\n') +
         kleur.dim(`Run \`npx agentdm init\` here first (cwd=${cwd}).\n`),
     );
     process.exit(1);
@@ -126,24 +139,21 @@ async function runSelfDriving({ cwd, runtime, runtimeId, state }) {
   const { runAskMyAgent } = await runtime.load();
   const { buildProvider } = await import('../lib/runtimes/ask-my-agent/providers/index.js');
 
+  // Model resolution is identical for every provider: state.model (set by
+  // init/deploy) wins; otherwise the provider-specific env var; otherwise
+  // the provider class's built-in default. HuggingFace is the only one
+  // that errors when nothing resolves — its InferenceClient needs an
+  // explicit model.
   const providerOpts = {};
-  if (providerId === 'huggingface') {
-    const model = state?.model || process.env.HUGGINGFACE_MODEL;
-    if (!model) {
-      process.stderr.write(
-        kleur.red('HuggingFace provider needs a model.\n') +
-          kleur.dim(`Set HUGGINGFACE_MODEL in ${envPath} or re-run \`npx agentdm init\`.\n`),
-      );
-      process.exit(1);
-    }
-    providerOpts.model = model;
-  } else {
-    // Anthropic / OpenAI defaults live in the provider class; allow env override.
-    const envModel =
-      providerId === 'anthropic'
-        ? process.env.ANTHROPIC_MODEL
-        : process.env.OPENAI_MODEL;
-    if (envModel) providerOpts.model = envModel;
+  const envName = modelEnvName(providerId);
+  const model = state?.model || (envName ? process.env[envName] : null);
+  if (model) providerOpts.model = model;
+  if (providerId === 'huggingface' && !providerOpts.model) {
+    process.stderr.write(
+      kleur.red('HuggingFace provider needs a model.\n') +
+        kleur.dim(`Set HUGGINGFACE_MODEL in ${envPath} or re-run \`npx agentdm init\`.\n`),
+    );
+    process.exit(1);
   }
 
   const provider = buildProvider(providerId, providerOpts);
