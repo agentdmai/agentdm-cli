@@ -11,6 +11,9 @@ import { runLoop } from '../lib/loop.js';
 import { whichAgent, RUNTIMES as AGENTS } from '../lib/runtimes/index.js';
 import { pickAgentdmAuth } from '../lib/agentdm-auth.js';
 import { getHuggingFaceToken } from '../lib/huggingface-token.js';
+import { getAnthropicToken } from '../lib/anthropic-token.js';
+import { getOpenAIToken } from '../lib/openai-token.js';
+import { getProviderModel, modelEnvName } from '../lib/provider-model.js';
 import { configureTools, findTool } from '../lib/tools/index.js';
 
 const ABORT = () => {
@@ -338,33 +341,12 @@ async function initAskMyAgent({ cwd }) {
   const providerKey = { apiKey: '', model: '' };
   if (settings.provider === 'huggingface') {
     providerKey.apiKey = await getHuggingFaceToken({ onCancel: ABORT });
-    const m = await prompts(
-      [
-        {
-          type: 'text',
-          name: 'model',
-          message: 'HuggingFace model id',
-          initial: 'meta-llama/Llama-3.3-70B-Instruct',
-          validate: (v) => (v && v.trim().length > 0 ? true : 'model is required'),
-        },
-      ],
-      { onCancel: ABORT },
-    );
-    providerKey.model = m.model;
+  } else if (settings.provider === 'anthropic') {
+    providerKey.apiKey = await getAnthropicToken({ onCancel: ABORT });
   } else {
-    const k = await prompts(
-      [
-        {
-          type: 'password',
-          name: 'apiKey',
-          message: settings.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY',
-          validate: (v) => (v && v.trim().length > 0 ? true : 'API key is required'),
-        },
-      ],
-      { onCancel: ABORT },
-    );
-    providerKey.apiKey = k.apiKey;
+    providerKey.apiKey = await getOpenAIToken({ onCancel: ABORT });
   }
+  providerKey.model = await getProviderModel(settings.provider, { onCancel: ABORT });
 
   // Walk the tool registry — same prompts every agent sees, same code path.
   const enabledTools = await configureTools({ onCancel: ABORT });
@@ -409,10 +391,9 @@ async function initAskMyAgent({ cwd }) {
   };
   if (settings.provider === 'anthropic') envEntries.ANTHROPIC_API_KEY = providerKey.apiKey.trim();
   if (settings.provider === 'openai') envEntries.OPENAI_API_KEY = providerKey.apiKey.trim();
-  if (settings.provider === 'huggingface') {
-    envEntries.HF_TOKEN = providerKey.apiKey.trim();
-    envEntries.HUGGINGFACE_MODEL = providerKey.model.trim();
-  }
+  if (settings.provider === 'huggingface') envEntries.HF_TOKEN = providerKey.apiKey.trim();
+  const envName = modelEnvName(settings.provider);
+  if (envName) envEntries[envName] = providerKey.model.trim();
   for (const t of enabledTools) {
     for (const [k, v] of Object.entries(t.secrets)) {
       envEntries[k] = typeof v === 'string' ? v.trim() : v;
@@ -424,7 +405,7 @@ async function initAskMyAgent({ cwd }) {
   const statePath = writeState(projectDir, {
     agent: 'ask-my-agent',
     provider: settings.provider,
-    ...(settings.provider === 'huggingface' ? { model: providerKey.model.trim() } : {}),
+    model: providerKey.model.trim(),
     systemPrompt: sys.systemPrompt.trim(),
     tools: enabledTools.map((t) => ({
       id: t.id,

@@ -3,6 +3,7 @@ import kleur from 'kleur';
 import { init } from './commands/init.js';
 import { start } from './commands/start.js';
 import { set } from './commands/set.js';
+import { deploy } from './commands/deploy.js';
 
 const HELP = `${kleur.bold('agentdm')}. Make your AI coding agent reachable on the AgentDM grid.
 
@@ -13,12 +14,14 @@ ${kleur.bold('Commands')}
   init      Pick an agent, sign in, save your settings, run it.
   start     Run the agent you set up with init.
   set       Add the AgentDM MCP server to .mcp.json in this folder.
+  deploy    Ship the Ask My Agent runtime to Railway (or other hosts).
   help      Show this message.
 
 ${kleur.bold('Examples')}
   npx agentdm init
   npx agentdm start
   npx agentdm set
+  npx agentdm deploy
 `;
 
 function parse(argv) {
@@ -32,6 +35,7 @@ function parse(argv) {
   // supervisors that drive multiple agents from one place.
   if (a === 'start') return { cmd: 'start', agentDir: args[1] || null };
   if (a === 'set') return { cmd: 'set' };
+  if (a === 'deploy') return { cmd: 'deploy' };
   return { cmd: 'unknown', input: args.join(' ') };
 }
 
@@ -54,6 +58,9 @@ async function main() {
       return;
     case 'set':
       await set();
+      return;
+    case 'deploy':
+      await deploy();
       return;
     case 'unknown':
       process.stderr.write(kleur.red(`unknown command: ${parsed.input}\n\n`));
