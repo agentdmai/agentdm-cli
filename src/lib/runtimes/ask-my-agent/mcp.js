@@ -1,69 +1,39 @@
-// MCP aggregator. Opens an agentdm-grid MCP session (streamable HTTP) and,
-// optionally, a github-mcp-server subprocess (stdio) running in read-only
-// mode. Returns both sessions plus the union of their tool descriptors so
-// the LLM can route tool calls back via the prefix.
+// MCP aggregator for ask-my-agent.
 //
-// Read-only enforcement on the GitHub side (ported from the Python WR-05
-// belt-and-suspenders):
-//   1. spawn github-mcp-server with `--read-only` CLI flag.
-//   2. set GITHUB_READ_ONLY=1 in the child env.
-//   3. after initialize(), enumerate tools and refuse to start if any name
-//      matches a mutating-verb regex (create_*, update_*, delete_*, …).
+// Opens the agentdm-grid MCP session (streamable HTTP) plus one stdio MCP
+// session per enabled tool from src/lib/tools. The tools list comes from
+// the `.agentdm` state file (written by init) — each entry names a tool id
+// + non-secret state; secrets live in process.env (loaded from .env).
+//
+// Each tool descriptor owns its own spawn config (toMcpServer), its tool
+// name prefix (toolPrefix), and an optional client-side filter (filterTool)
+// for runtimes that need an extra read-only layer (e.g., the deprecated
+// @modelcontextprotocol/server-github exposes write tools by default).
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { findTool } from '../../tools/index.js';
 
-// Mutating verb pattern. Matches a tool name like `create_issue`,
-// `delete_repo`, `merge_pull_request` — but NOT read-only verbs (get_*,
-// list_*, search_*).
-const GITHUB_WRITE_TOOL_RE = new RegExp(
-  '^(create|update|delete|patch|put|merge|push|fork|add|remove|' +
-    'transfer|enable|disable|dispatch|cancel|approve|request_review|' +
-    'submit|close|reopen|lock|unlock|invite|accept|decline|publish|' +
-    'set|edit|rename|archive|unarchive)(_|$)',
-  'i',
-);
-
-export class ReadOnlyEnforcementError extends Error {
-  constructor(offenders) {
-    super(
-      'github-mcp-server exposed write-capable tools despite --read-only ' +
-        'and GITHUB_READ_ONLY=1: ' +
-        offenders.join(', ') +
-        '. Upgrade or replace the binary, or run with a fine-grained PAT ' +
-        'that has only read scopes.',
-    );
-    this.name = 'ReadOnlyEnforcementError';
-    this.offenders = offenders;
-  }
-}
-
-function findWriteTools(toolNames) {
-  return toolNames.filter((n) => GITHUB_WRITE_TOOL_RE.test(n));
-}
-
-async function openGithub(pat) {
+async function openToolMcp(tool, entry) {
   const transport = new StdioClientTransport({
-    command: 'github-mcp-server',
-    args: ['stdio', '--read-only'],
-    env: {
-      ...process.env,
-      GITHUB_PERSONAL_ACCESS_TOKEN: pat,
-      GITHUB_READ_ONLY: '1',
-    },
+    command: entry.command,
+    args: entry.args,
+    env: { ...process.env, ...(entry.env || {}) },
   });
-  const client = new Client({ name: 'ask-my-agent', version: '0.1.0' }, { capabilities: {} });
+  const client = new Client(
+    { name: 'ask-my-agent', version: '0.1.0' },
+    { capabilities: {} },
+  );
   await client.connect(transport);
 
   const resp = await client.listTools();
-  const names = resp.tools.map((t) => t.name);
-  const offenders = findWriteTools(names);
-  if (offenders.length > 0) {
-    await client.close().catch(() => {});
-    throw new ReadOnlyEnforcementError(offenders);
-  }
-  return { client, tools: resp.tools };
+  const safeTools =
+    typeof tool.filterTool === 'function'
+      ? resp.tools.filter((t) => tool.filterTool(t.name))
+      : resp.tools;
+  const filteredCount = resp.tools.length - safeTools.length;
+  return { client, tools: safeTools, filteredCount };
 }
 
 async function openAgentdm(url, apiKey) {
@@ -72,7 +42,10 @@ async function openAgentdm(url, apiKey) {
       headers: { Authorization: `Bearer ${apiKey}` },
     },
   });
-  const client = new Client({ name: 'ask-my-agent', version: '0.1.0' }, { capabilities: {} });
+  const client = new Client(
+    { name: 'ask-my-agent', version: '0.1.0' },
+    { capabilities: {} },
+  );
   await client.connect(transport);
 
   const resp = await client.listTools();
@@ -80,60 +53,97 @@ async function openAgentdm(url, apiKey) {
 }
 
 /**
- * Open one or two MCP sessions and return them plus the unified tool list.
- * The github session is optional — if `githubPat` is empty/null, only the
- * agentdm session is opened.
+ * Open the agentdm session plus one MCP session per enabled tool. Returns
+ * the agentdm client, a map of tool-id → MCP client, and the unified tool
+ * list (with prefix-routed names) that the LLM provider sees.
  *
- * @returns {{ agentdm: Client, github: Client|null, tools: Array }} —
- *   tool entries are { name: "agentdm__<tool>" | "gh__<tool>", description,
- *   input_schema }.
+ * @param {{
+ *   agentdmUrl: string,
+ *   agentdmApiKey: string,
+ *   enabledTools?: Array<{ id: string, state?: object, secretEnvNames?: string[] }>,
+ * }} args
  */
-export async function openSessions({ agentdmUrl, agentdmApiKey, githubPat }) {
+export async function openSessions({ agentdmUrl, agentdmApiKey, enabledTools = [] }) {
   const dm = await openAgentdm(agentdmUrl, agentdmApiKey);
-  let gh = null;
-  if (githubPat) {
-    try {
-      gh = await openGithub(githubPat);
-    } catch (err) {
-      // Surface read-only enforcement loudly; for everything else, log and
-      // continue without github tools.
-      if (err instanceof ReadOnlyEnforcementError) {
-        await dm.client.close().catch(() => {});
-        throw err;
-      }
-      process.stderr.write(`[warn] github-mcp-server unavailable: ${err.message}\n`);
-      gh = null;
-    }
-  }
-
-  const tools = [
+  const toolSessions = {};
+  const toolDescriptors = {};
+  const aggregatedTools = [
     ...dm.tools.map((t) => ({
       name: `agentdm__${t.name}`,
       description: t.description ?? '',
       input_schema: t.inputSchema ?? {},
     })),
-    ...(gh
-      ? gh.tools.map((t) => ({
-          name: `gh__${t.name}`,
-          description: t.description ?? '',
-          input_schema: t.inputSchema ?? {},
-        }))
-      : []),
   ];
+
+  for (const t of enabledTools) {
+    const def = findTool(t.id);
+    if (!def) {
+      process.stderr.write(
+        `[warn] tool "${t.id}" is enabled in .agentdm but not registered in src/lib/tools/. Skipping.\n`,
+      );
+      continue;
+    }
+    // Re-pair secrets at runtime from process.env (loaded by dotenv from
+    // .env). Each tool persists its env-var names in state so we know what
+    // to look up here.
+    const secrets = {};
+    for (const k of t.secretEnvNames || []) {
+      if (process.env[k]) secrets[k] = process.env[k];
+    }
+    const entry = def.toMcpServer({ secrets, state: t.state || {} });
+
+    try {
+      const session = await openToolMcp(def, entry);
+      toolSessions[t.id] = session.client;
+      toolDescriptors[t.id] = def;
+      if (session.filteredCount > 0) {
+        process.stderr.write(
+          `[info] ${t.id}: filtered ${session.filteredCount} write-capable tool(s); ` +
+            'underlying credentials are the real boundary.\n',
+        );
+      }
+      const prefix = def.toolPrefix || t.id;
+      for (const tool of session.tools) {
+        aggregatedTools.push({
+          name: `${prefix}__${tool.name}`,
+          description: tool.description ?? '',
+          input_schema: tool.inputSchema ?? {},
+        });
+      }
+    } catch (err) {
+      process.stderr.write(
+        `[warn] ${t.id} MCP server unavailable: ${err.message}\n`,
+      );
+    }
+  }
+
+  // Per-tool constraint lines (e.g., "only reference these repos"). The
+  // caller appends these after the user-configured system prompt so the
+  // model sees role + capabilities first, then the concrete constraints
+  // captured at init time.
+  const toolSystemLines = [];
+  for (const t of enabledTools) {
+    const def = toolDescriptors[t.id];
+    if (!def?.describeFor) continue;
+    const line = def.describeFor(t.state || {});
+    if (line) toolSystemLines.push(line);
+  }
 
   return {
     agentdm: dm.client,
-    github: gh ? gh.client : null,
-    tools,
+    toolSessions,
+    toolDescriptors,
+    tools: aggregatedTools,
+    toolSystemLines,
     async close() {
       try {
         await dm.client.close();
       } catch {
         /* swallow */
       }
-      if (gh) {
+      for (const client of Object.values(toolSessions)) {
         try {
-          await gh.client.close();
+          await client.close();
         } catch {
           /* swallow */
         }

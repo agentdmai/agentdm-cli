@@ -1,8 +1,7 @@
 import path from 'node:path';
-import prompts from 'prompts';
 import kleur from 'kleur';
 import { writeMcpConfig } from '../lib/mcp-config.js';
-import { loginViaOAuth } from '../lib/oauth.js';
+import { pickAgentdmAuth } from '../lib/agentdm-auth.js';
 
 const ABORT = () => {
   const err = new Error('aborted');
@@ -16,48 +15,10 @@ export async function set() {
     kleur.dim('Add the AgentDM MCP server to .mcp.json in this folder.\n\n'),
   );
 
-  const choice = await prompts(
-    [
-      {
-        type: 'select',
-        name: 'authMethod',
-        message: 'How do you want to sign in to AgentDM?',
-        choices: [
-          { title: 'Open browser to sign in', value: 'oauth' },
-          { title: 'Paste an API token', value: 'token' },
-        ],
-        initial: 0,
-      },
-    ],
-    { onCancel: ABORT },
-  );
-
-  let token = null;
-  if (choice.authMethod === 'oauth') {
-    process.stdout.write(
-      '\n' +
-        kleur.bold('Opening your browser to sign in.\n') +
-        kleur.dim('Approve the request, then come back here.\n\n'),
-    );
-    // Pre-flight OAuth so tokens land in ~/.mcp-auth before we write .mcp.json.
-    // mcp-remote will read & refresh those tokens itself when the agent runs,
-    // so we deliberately don't embed an access_token in .mcp.json (it'd expire).
-    await loginViaOAuth();
-    process.stdout.write(kleur.green('✓ signed in\n'));
-  } else {
-    const pasted = await prompts(
-      [
-        {
-          type: 'password',
-          name: 'token',
-          message: 'AgentDM API token (get one at https://agentdm.ai)',
-          validate: (v) => (v && v.trim().length > 0 ? true : 'token is required'),
-        },
-      ],
-      { onCancel: ABORT },
-    );
-    token = pasted.token.trim();
-  }
+  const auth = await pickAgentdmAuth({ onCancel: ABORT });
+  // For OAuth, mcp-remote reads & refreshes tokens from ~/.mcp-auth itself,
+  // so we deliberately don't embed an access_token in .mcp.json (it'd expire).
+  const token = auth.method === 'token' ? auth.token : null;
 
   const mcpPath = path.join(process.cwd(), '.mcp.json');
   const result = writeMcpConfig(mcpPath, token);

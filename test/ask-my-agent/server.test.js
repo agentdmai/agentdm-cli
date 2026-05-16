@@ -89,7 +89,7 @@ test('buildCallTool: routes agentdm__ to the agentdm session', async () => {
       return { content: [{ type: 'text', text: 'agentdm-result' }] };
     },
   };
-  const callTool = buildCallTool({ agentdm, github: null });
+  const callTool = buildCallTool({ agentdm });
   const out = await callTool('agentdm__read_messages', { foo: 1 });
   assert.equal(out, 'agentdm-result');
   assert.equal(calls.length, 1);
@@ -109,7 +109,11 @@ test('buildCallTool: routes gh__ to the github session', async () => {
       return { content: [{ type: 'text', text: 'gh-result' }] };
     },
   };
-  const callTool = buildCallTool({ agentdm, github });
+  const callTool = buildCallTool({
+    agentdm,
+    toolSessions: { github },
+    toolDescriptors: { github: { id: 'github', toolPrefix: 'gh' } },
+  });
   const out = await callTool('gh__get_file_contents', { path: 'README.md' });
   assert.equal(out, 'gh-result');
   assert.deepEqual(calls[0], {
@@ -118,27 +122,27 @@ test('buildCallTool: routes gh__ to the github session', async () => {
   });
 });
 
-test('buildCallTool: rejects gh__ when github session is null', async () => {
+test('buildCallTool: rejects gh__ when github session is not registered', async () => {
   const agentdm = { callTool: async () => ({ content: [] }) };
-  const callTool = buildCallTool({ agentdm, github: null });
+  const callTool = buildCallTool({ agentdm });
   await assert.rejects(
     () => callTool('gh__anything', {}),
-    /GitHub MCP is not configured/,
+    /Tool prefix "gh" is not registered/,
   );
 });
 
 test('buildCallTool: rejects unknown prefix', async () => {
   const agentdm = { callTool: async () => ({ content: [] }) };
-  const callTool = buildCallTool({ agentdm, github: null });
+  const callTool = buildCallTool({ agentdm });
   await assert.rejects(
     () => callTool('unknown__tool', {}),
-    /Unknown tool prefix/,
+    /Tool prefix "unknown" is not registered/,
   );
 });
 
 test('buildCallTool: rejects non-string tool name', async () => {
   const agentdm = { callTool: async () => ({ content: [] }) };
-  const callTool = buildCallTool({ agentdm, github: null });
+  const callTool = buildCallTool({ agentdm });
   await assert.rejects(() => callTool(undefined, {}), /tool name must be a string/);
 });
 
@@ -151,9 +155,15 @@ test('buildCallTool: tolerates missing/non-object input', async () => {
       return { content: [{ type: 'text', text: 'ok' }] };
     },
   };
-  const callTool = buildCallTool({ agentdm, github: null });
+  const callTool = buildCallTool({ agentdm });
   await callTool('agentdm__noop', undefined);
   await callTool('agentdm__noop', 'not-an-object');
+});
+
+test('buildCallTool: rejects bare names with no prefix', async () => {
+  const agentdm = { callTool: async () => ({ content: [] }) };
+  const callTool = buildCallTool({ agentdm });
+  await assert.rejects(() => callTool('noprefix', {}), /Unknown tool name shape/);
 });
 
 // ---- defaultWakeUrlFor -------------------------------------------------

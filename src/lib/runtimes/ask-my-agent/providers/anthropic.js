@@ -37,7 +37,19 @@ export class AnthropicProvider {
    */
   async *chat(messages, tools, callTool) {
     const client = this._getClient();
-    const conversation = [...messages];
+    // Anthropic takes `system` as a top-level param, not as a role in the
+    // messages array. Pull any role: 'system' entries out and concatenate
+    // them; everything else flows into the conversation as-is.
+    const systemParts = [];
+    const conversation = [];
+    for (const m of messages) {
+      if (m.role === 'system' && typeof m.content === 'string') {
+        systemParts.push(m.content);
+      } else {
+        conversation.push(m);
+      }
+    }
+    const systemText = systemParts.join('\n');
 
     const anthropicTools = (tools ?? []).map((t) => ({
       name: t.name,
@@ -51,6 +63,7 @@ export class AnthropicProvider {
         max_tokens: 1024,
         messages: conversation,
       };
+      if (systemText) params.system = systemText;
       if (anthropicTools.length > 0) params.tools = anthropicTools;
 
       const stream = client.messages.stream(params);
