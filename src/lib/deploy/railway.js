@@ -119,29 +119,43 @@ class RailwayClient {
     return service;
   }
 
-  async variableUpsert({ projectId, environmentId, serviceId, name, value }) {
+  // Bulk variable upsert — one mutation = one deploy trigger on Railway's
+  // side. Replaces the per-var loop that was firing N redeploys (one per
+  // env var) on first deploy. `variables` is a flat { name: value } map;
+  // values are coerced to strings.
+  async variableCollectionUpsert({ projectId, environmentId, serviceId, variables }) {
+    const cleaned = {};
+    for (const [k, v] of Object.entries(variables)) {
+      if (v === undefined || v === null || v === '') continue;
+      cleaned[k] = String(v);
+    }
+    if (Object.keys(cleaned).length === 0) return;
     await this.request(
-      `mutation VariableUpsert($input: VariableUpsertInput!) {
-         variableUpsert(input: $input)
+      `mutation VariableCollectionUpsert($input: VariableCollectionUpsertInput!) {
+         variableCollectionUpsert(input: $input)
        }`,
       {
-        input: { projectId, environmentId, serviceId, name, value },
+        input: {
+          projectId,
+          environmentId,
+          serviceId,
+          variables: cleaned,
+        },
       },
     );
   }
 
   async setVariables({ projectId, environmentId, serviceId, vars, log }) {
-    for (const [name, value] of Object.entries(vars)) {
-      if (value === undefined || value === null || value === '') continue;
-      log(`  setting ${name}`);
-      await this.variableUpsert({
-        projectId,
-        environmentId,
-        serviceId,
-        name,
-        value: String(value),
-      });
-    }
+    const names = Object.keys(vars).filter(
+      (k) => vars[k] !== undefined && vars[k] !== null && vars[k] !== '',
+    );
+    log(`  setting ${names.length} variables in one upsert (${names.join(', ')})`);
+    await this.variableCollectionUpsert({
+      projectId,
+      environmentId,
+      serviceId,
+      variables: vars,
+    });
   }
 }
 
