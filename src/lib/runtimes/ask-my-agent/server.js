@@ -201,7 +201,14 @@ export async function runAskMyAgent({
   userSystemPrompt = '',
   provider,
   fallbackPollMs = 60_000,
-  log = (m) => process.stderr.write(`${m}\n`),
+  // Default logger writes operational lines ([runner], [recv], [send],
+  // [wake:*], [info], [warn], [tool]) to stdout so platforms like Railway
+  // and Fly don't paint every line red. Only [error]-prefixed lines are
+  // routed to stderr so error indicators in dashboards stay meaningful.
+  log = (m) => {
+    const stream = /^\s*\[error\]/i.test(m) ? process.stderr : process.stdout;
+    stream.write(`${m}\n`);
+  },
   signal,
 }) {
   if (!agentdmApiKey) throw new Error('agentdmApiKey is required');

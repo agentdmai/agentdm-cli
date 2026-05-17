@@ -78,7 +78,7 @@ export async function openSessions({ agentdmUrl, agentdmApiKey, enabledTools = [
   for (const t of enabledTools) {
     const def = findTool(t.id);
     if (!def) {
-      process.stderr.write(
+      process.stdout.write(
         `[warn] tool "${t.id}" is enabled in .agentdm but not registered in src/lib/tools/. Skipping.\n`,
       );
       continue;
@@ -97,7 +97,7 @@ export async function openSessions({ agentdmUrl, agentdmApiKey, enabledTools = [
       toolSessions[t.id] = session.client;
       toolDescriptors[t.id] = def;
       if (session.filteredCount > 0) {
-        process.stderr.write(
+        process.stdout.write(
           `[info] ${t.id}: filtered ${session.filteredCount} write-capable tool(s); ` +
             'underlying credentials are the real boundary.\n',
         );
@@ -111,7 +111,7 @@ export async function openSessions({ agentdmUrl, agentdmApiKey, enabledTools = [
         });
       }
     } catch (err) {
-      process.stderr.write(
+      process.stdout.write(
         `[warn] ${t.id} MCP server unavailable: ${err.message}\n`,
       );
     }
