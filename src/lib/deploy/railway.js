@@ -21,6 +21,17 @@ import { openUrl } from '../open-url.js';
 
 const GRAPHQL_URL = 'https://backboard.railway.com/graphql/v2';
 
+// Drop empty/undefined/null values and coerce to strings — Railway's
+// EnvironmentVariables scalar wants a flat { name: "value" } map.
+function cleanVars(variables = {}) {
+  const cleaned = {};
+  for (const [k, v] of Object.entries(variables)) {
+    if (v === undefined || v === null || v === '') continue;
+    cleaned[k] = String(v);
+  }
+  return cleaned;
+}
+
 class RailwayClient {
   constructor(token) {
     this.token = token;
@@ -97,7 +108,32 @@ class RailwayClient {
     return { id: project.id, name: project.name, environmentId };
   }
 
-  async serviceCreateFromRepo({ projectId, repo, branch = 'main', name }) {
+  // Create the service from a GitHub repo with env vars set INLINE.
+  //
+  // Setting variables (or instance config) in a *separate* mutation after
+  // create triggers a SECOND Railway deployment. The blue/green handover then
+  // prints a "Stopping Container" for the superseded deploy — which looks
+  // exactly like the worker crashing on boot (this is what made `agentdm
+  // deploy` appear broken). One create-with-variables call = one deployment =
+  // no confusing handover.
+  async serviceCreateFromRepo({
+    projectId,
+    repo,
+    branch = 'main',
+    name,
+    environmentId,
+    variables = {},
+  }) {
+    const input = {
+      projectId,
+      name,
+      source: { repo },
+      branch,
+    };
+    if (environmentId) input.environmentId = environmentId;
+    const cleaned = cleanVars(variables);
+    if (Object.keys(cleaned).length > 0) input.variables = cleaned;
+
     const data = await this.request(
       `mutation ServiceCreate($input: ServiceCreateInput!) {
          serviceCreate(input: $input) {
@@ -105,72 +141,11 @@ class RailwayClient {
            name
          }
        }`,
-      {
-        input: {
-          projectId,
-          name,
-          source: { repo },
-          branch,
-        },
-      },
+      { input },
     );
     const service = data?.serviceCreate;
     if (!service?.id) throw new Error('serviceCreate did not return an id');
     return service;
-  }
-
-  // Bulk variable upsert — one mutation = one deploy trigger on Railway's
-  // side. Replaces the per-var loop that was firing N redeploys (one per
-  // env var) on first deploy. `variables` is a flat { name: value } map;
-  // values are coerced to strings.
-  async variableCollectionUpsert({ projectId, environmentId, serviceId, variables }) {
-    const cleaned = {};
-    for (const [k, v] of Object.entries(variables)) {
-      if (v === undefined || v === null || v === '') continue;
-      cleaned[k] = String(v);
-    }
-    if (Object.keys(cleaned).length === 0) return;
-    await this.request(
-      `mutation VariableCollectionUpsert($input: VariableCollectionUpsertInput!) {
-         variableCollectionUpsert(input: $input)
-       }`,
-      {
-        input: {
-          projectId,
-          environmentId,
-          serviceId,
-          variables: cleaned,
-        },
-      },
-    );
-  }
-
-  // Disable App Sleeping (a.k.a. "Serverless") and pin a restart policy on the
-  // service instance. The ask-my-agent worker is outbound-only — it makes no
-  // inbound HTTP requests — so Railway's idle-traffic heuristics will sleep it
-  // shortly after start unless App Sleeping is off. Schema note:
-  // ServiceInstanceUpdateInput.sleepApplication toggles App Sleeping;
-  // restartPolicyType is one of ALWAYS | ON_FAILURE | NEVER.
-  async serviceInstanceUpdate({ serviceId, environmentId, input }) {
-    await this.request(
-      `mutation ServiceInstanceUpdate($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
-         serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
-       }`,
-      { serviceId, environmentId, input },
-    );
-  }
-
-  async setVariables({ projectId, environmentId, serviceId, vars, log }) {
-    const names = Object.keys(vars).filter(
-      (k) => vars[k] !== undefined && vars[k] !== null && vars[k] !== '',
-    );
-    log(`  setting ${names.length} variables in one upsert (${names.join(', ')})`);
-    await this.variableCollectionUpsert({
-      projectId,
-      environmentId,
-      serviceId,
-      variables: vars,
-    });
   }
 }
 
@@ -244,7 +219,7 @@ export const railwayProvider = {
    * Deploy by:
    *   1. Auth (token via env / browser flow).
    *   2. Pick project name + source repo.
-   *   3. projectCreate -> serviceCreate -> setVariables.
+   *   3. projectCreate -> serviceCreate (env vars inline; one deployment).
    *   4. Open the project's Railway dashboard URL.
    *
    * Returns { url, projectId, serviceId } so the CLI can print + remember.
@@ -276,48 +251,25 @@ export const railwayProvider = {
     });
     log(kleur.green(`project created: ${project.id}`));
 
-    log(kleur.dim(`creating service from ${repo}@${branch}…`));
+    // Create the service WITH env vars in one shot so Railway runs a single
+    // deployment. A separate variable upsert would trigger a second deploy and
+    // the resulting handover ("Stopping Container") looks like a boot crash.
+    const varNames = Object.keys(cleanVars(envVars));
+    log(
+      kleur.dim(
+        `creating service from ${repo}@${branch} with ${varNames.length} env var(s)…\n` +
+          `  ${varNames.join(', ')}`,
+      ),
+    );
     const service = await client.serviceCreateFromRepo({
       projectId: project.id,
+      environmentId: project.environmentId,
       repo,
       branch,
       name: 'agentdm-runtime',
+      variables: envVars,
     });
-    log(kleur.green(`service created: ${service.id}`));
-
-    log(kleur.dim('setting environment variables…'));
-    await client.setVariables({
-      projectId: project.id,
-      environmentId: project.environmentId,
-      serviceId: service.id,
-      vars: envVars,
-      log,
-    });
-
-    // Keep the worker always-on: turn off App Sleeping so Railway doesn't stop
-    // the container shortly after start (it serves no inbound traffic), and pin
-    // ALWAYS restart. Best-effort — Railway's GraphQL schema evolves and the
-    // workspace default may already be correct, so a failure here only prints a
-    // manual-fallback note rather than failing an otherwise-successful deploy.
-    log(kleur.dim('configuring always-on (disabling App Sleeping)…'));
-    try {
-      await client.serviceInstanceUpdate({
-        serviceId: service.id,
-        environmentId: project.environmentId,
-        input: { sleepApplication: false, restartPolicyType: 'ALWAYS' },
-      });
-      log(kleur.green('always-on configured (App Sleeping off)'));
-    } catch (err) {
-      log(
-        kleur.yellow('could not configure always-on automatically: ') +
-          kleur.dim(err.message) +
-          '\n' +
-          kleur.dim(
-            '  If the container stops shortly after start, open the service in\n' +
-              '  Railway → Settings and turn OFF "Serverless" / "App Sleeping".\n',
-          ),
-      );
-    }
+    log(kleur.green(`service created: ${service.id} (single deployment)`));
 
     const url = `https://railway.com/project/${project.id}`;
     log('\n' + kleur.bold('Deployed.') + '\n' + kleur.cyan(`  ${url}\n`));
