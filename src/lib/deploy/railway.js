@@ -145,6 +145,21 @@ class RailwayClient {
     );
   }
 
+  // Disable App Sleeping (a.k.a. "Serverless") and pin a restart policy on the
+  // service instance. The ask-my-agent worker is outbound-only — it makes no
+  // inbound HTTP requests — so Railway's idle-traffic heuristics will sleep it
+  // shortly after start unless App Sleeping is off. Schema note:
+  // ServiceInstanceUpdateInput.sleepApplication toggles App Sleeping;
+  // restartPolicyType is one of ALWAYS | ON_FAILURE | NEVER.
+  async serviceInstanceUpdate({ serviceId, environmentId, input }) {
+    await this.request(
+      `mutation ServiceInstanceUpdate($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
+         serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+       }`,
+      { serviceId, environmentId, input },
+    );
+  }
+
   async setVariables({ projectId, environmentId, serviceId, vars, log }) {
     const names = Object.keys(vars).filter(
       (k) => vars[k] !== undefined && vars[k] !== null && vars[k] !== '',
@@ -278,6 +293,31 @@ export const railwayProvider = {
       vars: envVars,
       log,
     });
+
+    // Keep the worker always-on: turn off App Sleeping so Railway doesn't stop
+    // the container shortly after start (it serves no inbound traffic), and pin
+    // ALWAYS restart. Best-effort — Railway's GraphQL schema evolves and the
+    // workspace default may already be correct, so a failure here only prints a
+    // manual-fallback note rather than failing an otherwise-successful deploy.
+    log(kleur.dim('configuring always-on (disabling App Sleeping)…'));
+    try {
+      await client.serviceInstanceUpdate({
+        serviceId: service.id,
+        environmentId: project.environmentId,
+        input: { sleepApplication: false, restartPolicyType: 'ALWAYS' },
+      });
+      log(kleur.green('always-on configured (App Sleeping off)'));
+    } catch (err) {
+      log(
+        kleur.yellow('could not configure always-on automatically: ') +
+          kleur.dim(err.message) +
+          '\n' +
+          kleur.dim(
+            '  If the container stops shortly after start, open the service in\n' +
+              '  Railway → Settings and turn OFF "Serverless" / "App Sleeping".\n',
+          ),
+      );
+    }
 
     const url = `https://railway.com/project/${project.id}`;
     log('\n' + kleur.bold('Deployed.') + '\n' + kleur.cyan(`  ${url}\n`));

@@ -26,6 +26,7 @@ import {
 import { runLoop } from '../lib/loop.js';
 import { RUNTIMES, whichAgent } from '../lib/runtimes/index.js';
 import { modelEnvName } from '../lib/provider-model.js';
+import { startHealthServer } from '../lib/health-server.js';
 
 function isTruthyEnv(v) {
   if (!v) return false;
@@ -165,10 +166,20 @@ async function runSelfDriving({ cwd, runtime, runtimeId, state }) {
       kleur.dim('Press ctrl-c to stop.\n\n'),
   );
 
+  // Hosted platforms (Railway, Render, Fly) expect a service to listen on
+  // $PORT and will mark a port-less process crashed — or sleep it — even
+  // though this worker is outbound-only. Bind a throwaway health server when
+  // $PORT is present so that port detection passes. No-op locally (PORT unset).
+  const healthServer = await startHealthServer({
+    port: process.env.PORT,
+    log: (m) => process.stdout.write(kleur.dim(`${m}\n`)),
+  });
+
   const controller = new AbortController();
   const onSig = () => {
     process.stdout.write('\n' + kleur.dim('stopping…\n'));
     controller.abort();
+    if (healthServer) healthServer.close();
   };
   process.on('SIGINT', onSig);
   process.on('SIGTERM', onSig);

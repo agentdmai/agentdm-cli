@@ -7,3 +7,5 @@ package-lock.json
 .agentdm
 .mcp.json
 AGENTS.md
+.railway-token
+railway-status.mjs
