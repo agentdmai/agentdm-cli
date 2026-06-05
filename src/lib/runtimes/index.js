@@ -1,6 +1,10 @@
 // Runtime registry. Maps an agent id ("claude" | "copilot" | "opencode" |
-// "ask-my-agent") to its metadata used by `whichAgent`, the `init` wizard,
-// and the `start` dispatcher.
+// "pi" | "ask-my-agent") to its metadata used by `whichAgent`, the `init`
+// wizard, and the `start` dispatcher.
+//
+// `wiring` says how the agent reaches the grid: "mcp" agents read a .mcp.json
+// the CLI writes; "pi-extension" agents (Pi has no MCP) load a generated
+// extension from .pi/extensions/. Self-driving runtimes need no wiring.
 //
 // Adapter classes are imported lazily so we never pay the side-effect
 // cost of loading e.g. the copilot module when the user only runs claude.
@@ -26,6 +30,7 @@ export const RUNTIMES = {
     label: 'Claude Code',
     bin: 'claude',
     supportsLoop: true,
+    wiring: 'mcp',
     installHint: 'npm i -g @anthropic-ai/claude-code',
     async load() {
       const { ClaudeAdapter } = await import('./claude.js');
@@ -37,10 +42,25 @@ export const RUNTIMES = {
     label: 'GitHub Copilot CLI',
     bin: 'copilot',
     supportsLoop: true,
+    wiring: 'mcp',
     installHint: 'brew install gh && gh extension install github/gh-copilot && copilot login',
     async load() {
       const { CopilotAdapter } = await import('./copilot.js');
       return CopilotAdapter;
+    },
+  },
+  pi: {
+    id: 'pi',
+    label: 'Pi',
+    bin: 'pi',
+    supportsLoop: true,
+    // Pi has no .mcp.json — the grid is wired in via a generated extension
+    // dropped into .pi/extensions/agentdm/ (see lib/pi-extension.js).
+    wiring: 'pi-extension',
+    installHint: 'npm i -g @mariozechner/pi-coding-agent',
+    async load() {
+      const { PiAdapter } = await import('./pi.js');
+      return PiAdapter;
     },
   },
   opencode: {
@@ -48,6 +68,7 @@ export const RUNTIMES = {
     label: 'OpenCode',
     bin: 'opencode',
     supportsLoop: false,
+    wiring: 'mcp',
     installHint: 'curl -fsSL https://opencode.ai/install | bash',
     async load() {
       throw new Error('OpenCode adapter not implemented');

@@ -40,6 +40,7 @@ export async function init() {
           { title: 'Ask My Agent (built-in, hosted LLM)', value: 'ask-my-agent' },
           { title: 'Claude Code (your coding agent)', value: 'claude' },
           { title: 'GitHub Copilot CLI', value: 'copilot' },
+          { title: 'Pi (pi.dev)', value: 'pi' },
           { title: 'OpenCode', value: 'opencode' },
         ],
         initial: 0,
@@ -58,18 +59,22 @@ export async function init() {
 }
 
 // ---------------------------------------------------------------------------
-// Coding-agent flow (Claude Code, Copilot, OpenCode)
+// Coding-agent flow (Claude Code, Copilot, Pi, OpenCode)
 // ---------------------------------------------------------------------------
 
 async function initCodingAgent({ cwd, agentId }) {
+  const agentDef = AGENTS[agentId];
+  const isPi = agentDef.wiring === 'pi-extension';
+
   const auth = await pickAgentdmAuth({ onCancel: ABORT });
   // For OAuth, mcp-remote refreshes from its own ~/.mcp-auth cache, so we
   // intentionally leave the token out of .mcp.json. Pasted tokens are
   // long-lived and get embedded as a Bearer header.
   const token = auth.method === 'token' ? auth.token : null;
 
-  // Walk the tool registry — same prompts every agent sees, same code path.
-  const enabledTools = await configureTools({ onCancel: ABORT });
+  // Pi has no MCP, so the extra MCP-backed tools (github, web-browser, …) don't
+  // apply — it only gets the agentdm grid. Skip that prompt for Pi.
+  const enabledTools = isPi ? [] : await configureTools({ onCancel: ABORT });
 
   // System prompt for the agent. Seeded with a default that mentions each
   // enabled tool. Coding agents read this from AGENTS.md (cross-agent
@@ -122,7 +127,6 @@ async function initCodingAgent({ cwd, agentId }) {
     { onCancel: ABORT },
   );
 
-  const agentDef = AGENTS[agentId];
   const projectDir = path.resolve(settings.cwd);
 
   process.stdout.write('\n');
@@ -136,30 +140,43 @@ async function initCodingAgent({ cwd, agentId }) {
     process.stdout.write(kleur.dim(`  to install: ${agentDef.installHint}\n`));
   }
 
-  // Build the server map: agentdm always, plus every enabled tool. Each
-  // tool inlines its own secrets into the entry's env because coding
-  // agents don't forward the parent process.env to MCP children.
-  const servers = { agentdm: buildAgentdmRemoteEntry(token) };
-  for (const t of enabledTools) {
-    const def = findTool(t.id);
-    if (!def) continue;
-    servers[t.id] = def.toMcpServer({ secrets: t.secrets, state: t.state });
-  }
+  if (isPi) {
+    // Pi loads a generated extension instead of reading .mcp.json. Embed the
+    // token (OAuth or pasted) so the extension can authenticate to the grid.
+    const { installPiExtension } = await import('../lib/pi-extension.js');
+    const res = installPiExtension(projectDir, { token: auth.token });
+    process.stdout.write(kleur.green(`wrote ${res.filePath}\n`));
+    if (auth.method === 'oauth') {
+      process.stdout.write(
+        kleur.dim('note: OAuth tokens can expire. For an unattended loop, paste an API token instead.\n'),
+      );
+    }
+  } else {
+    // Build the server map: agentdm always, plus every enabled tool. Each
+    // tool inlines its own secrets into the entry's env because coding
+    // agents don't forward the parent process.env to MCP children.
+    const servers = { agentdm: buildAgentdmRemoteEntry(token) };
+    for (const t of enabledTools) {
+      const def = findTool(t.id);
+      if (!def) continue;
+      servers[t.id] = def.toMcpServer({ secrets: t.secrets, state: t.state });
+    }
 
-  const mcpPath = path.join(projectDir, '.mcp.json');
-  const mcpResult = writeMcpServers(mcpPath, servers);
-  if (mcpResult.fileCreated) {
-    process.stdout.write(kleur.green(`wrote ${mcpPath}\n`));
-  }
-  if (mcpResult.created.length > 0) {
-    process.stdout.write(
-      kleur.green(`added MCP servers: ${mcpResult.created.join(', ')}\n`),
-    );
-  }
-  if (mcpResult.replaced.length > 0) {
-    process.stdout.write(
-      kleur.green(`updated MCP servers: ${mcpResult.replaced.join(', ')}\n`),
-    );
+    const mcpPath = path.join(projectDir, '.mcp.json');
+    const mcpResult = writeMcpServers(mcpPath, servers);
+    if (mcpResult.fileCreated) {
+      process.stdout.write(kleur.green(`wrote ${mcpPath}\n`));
+    }
+    if (mcpResult.created.length > 0) {
+      process.stdout.write(
+        kleur.green(`added MCP servers: ${mcpResult.created.join(', ')}\n`),
+      );
+    }
+    if (mcpResult.replaced.length > 0) {
+      process.stdout.write(
+        kleur.green(`updated MCP servers: ${mcpResult.replaced.join(', ')}\n`),
+      );
+    }
   }
 
   writeAgentsMd(projectDir, sys.systemPrompt.trim());
@@ -177,16 +194,26 @@ async function initCodingAgent({ cwd, agentId }) {
   });
   process.stdout.write(kleur.green(`saved your settings to ${statePath}\n`));
 
-  const inlinedSecrets =
-    token || enabledTools.some((t) => Object.keys(t.secrets).length > 0);
-  if (inlinedSecrets) {
+  if (isPi) {
     process.stdout.write(
       '\n' +
         kleur.yellow('heads up: ') +
         kleur.dim(
-          'tokens are saved in .mcp.json. If this folder is a git repo, add it to .gitignore.\n',
+          'your token is embedded in .pi/extensions/agentdm/index.ts. If this folder is a git repo, add .pi/ to .gitignore.\n',
         ),
     );
+  } else {
+    const inlinedSecrets =
+      token || enabledTools.some((t) => Object.keys(t.secrets).length > 0);
+    if (inlinedSecrets) {
+      process.stdout.write(
+        '\n' +
+          kleur.yellow('heads up: ') +
+          kleur.dim(
+            'tokens are saved in .mcp.json. If this folder is a git repo, add it to .gitignore.\n',
+          ),
+      );
+    }
   }
 
   if (!settings.startNow) {

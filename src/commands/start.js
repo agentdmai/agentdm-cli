@@ -201,13 +201,26 @@ async function runSelfDriving({ cwd, runtime, runtimeId, state }) {
 // ---------------------------------------------------------------------------
 
 async function runEndUser({ cwd, runtime, state }) {
-  const mcpPath = path.join(cwd, '.mcp.json');
-  if (!existsSync(mcpPath)) {
-    process.stderr.write(
-      kleur.red(`.mcp.json is missing in this folder.\n`) +
-        kleur.dim('Run `npx agentdm init` again to recreate it.\n'),
-    );
-    process.exit(1);
+  // Pi wires the grid through a generated extension, not a .mcp.json — check
+  // for whichever this runtime expects so the error points at the right fix.
+  if (runtime.wiring === 'pi-extension') {
+    const extPath = path.join(cwd, '.pi', 'extensions', 'agentdm', 'index.ts');
+    if (!existsSync(extPath)) {
+      process.stderr.write(
+        kleur.red('the agentdm Pi extension is missing in this folder.\n') +
+          kleur.dim('Run `npx agentdm init` again to reinstall it.\n'),
+      );
+      process.exit(1);
+    }
+  } else {
+    const mcpPath = path.join(cwd, '.mcp.json');
+    if (!existsSync(mcpPath)) {
+      process.stderr.write(
+        kleur.red(`.mcp.json is missing in this folder.\n`) +
+          kleur.dim('Run `npx agentdm init` again to recreate it.\n'),
+      );
+      process.exit(1);
+    }
   }
 
   process.stdout.write(
