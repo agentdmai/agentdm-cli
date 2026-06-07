@@ -67,10 +67,10 @@ async function initCodingAgent({ cwd, agentId }) {
   const isPi = agentDef.wiring === 'pi-extension';
 
   const auth = await pickAgentdmAuth({ onCancel: ABORT });
-  // For OAuth, mcp-remote refreshes from its own ~/.mcp-auth cache, so we
-  // intentionally leave the token out of .mcp.json. Pasted tokens are
-  // long-lived and get embedded as a Bearer header.
-  const token = auth.method === 'token' ? auth.token : null;
+  // `token` is always a long-lived static API key now — pasted, or minted from
+  // the browser sign-in (pickAgentdmAuth exchanges OAuth for a static key). It
+  // gets embedded as a Bearer header so the runtime needs no OAuth at runtime.
+  const token = auth.token;
 
   // Pi has no MCP, so the extra MCP-backed tools (github, web-browser, …) don't
   // apply — it only gets the agentdm grid. Skip that prompt for Pi.
@@ -142,15 +142,10 @@ async function initCodingAgent({ cwd, agentId }) {
 
   if (isPi) {
     // Pi loads a generated extension instead of reading .mcp.json. Embed the
-    // token (OAuth or pasted) so the extension can authenticate to the grid.
+    // static API key so the extension can authenticate to the grid.
     const { installPiExtension } = await import('../lib/pi-extension.js');
-    const res = installPiExtension(projectDir, { token: auth.token });
+    const res = installPiExtension(projectDir, { token });
     process.stdout.write(kleur.green(`wrote ${res.filePath}\n`));
-    if (auth.method === 'oauth') {
-      process.stdout.write(
-        kleur.dim('note: OAuth tokens can expire. For an unattended loop, paste an API token instead.\n'),
-      );
-    }
   } else {
     // Build the server map: agentdm always, plus every enabled tool. Each
     // tool inlines its own secrets into the entry's env because coding
@@ -412,6 +407,8 @@ async function initAskMyAgent({ cwd }) {
   // Persist secrets to .env. Each tool contributes its own secret env vars
   // (via configure() → secrets). .agentdm gets non-secret tool state + the
   // env var names so the runtime can re-pair them later.
+  // `auth.token` is a long-lived static API key for both paths (pasted, or
+  // minted from the browser sign-in), so the runner just reads AGENTDM_API_KEY.
   const envEntries = {
     AGENTDM_API_KEY: settings.agentdmApiKey.trim(),
     MODEL_PROVIDER: settings.provider,
