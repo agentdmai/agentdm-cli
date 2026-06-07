@@ -16,9 +16,9 @@ export async function set() {
   );
 
   const auth = await pickAgentdmAuth({ onCancel: ABORT });
-  // For OAuth, mcp-remote reads & refreshes tokens from ~/.mcp-auth itself,
-  // so we deliberately don't embed an access_token in .mcp.json (it'd expire).
-  const token = auth.method === 'token' ? auth.token : null;
+  // `auth.token` is a long-lived static API key for both paths (pasted, or
+  // minted from the browser sign-in), so embed it as a Bearer header.
+  const token = auth.token;
 
   const mcpPath = path.join(process.cwd(), '.mcp.json');
   const result = writeMcpConfig(mcpPath, token);

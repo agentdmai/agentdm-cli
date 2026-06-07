@@ -245,3 +245,61 @@ function readTokens(filePath) {
     return null;
   }
 }
+
+/**
+ * The web app origin that hosts the OAuth + REST API, derived from the grid
+ * URL without any network call: production api.agentdm.ai → app.agentdm.ai;
+ * localhost :3001 → :3000.
+ *
+ * @param {string} [gridUrl] defaults to the built-in grid URL.
+ * @returns {string}
+ */
+export function deriveWebAppOrigin(gridUrl) {
+  try {
+    const u = new URL(gridUrl || AGENTDM_MCP_URL);
+    if (u.host.startsWith('api.agentdm.ai')) return 'https://app.agentdm.ai';
+    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') {
+      return `http://${u.hostname}:3000`;
+    }
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return 'https://app.agentdm.ai';
+  }
+}
+
+/**
+ * Exchange a freshly-minted OAuth access token for a long-lived static API
+ * key (POST /api/oauth/api-key). This is what lets a one-time browser sign-in
+ * produce a non-expiring credential we can store and reuse forever — the same
+ * shape as a pasted API token. Returns { apiKey, alias, agentId }.
+ *
+ * @param {string} accessToken OAuth access token from loginViaOAuth().
+ * @param {{ gridUrl?: string, fetchImpl?: typeof fetch }} [opts]
+ */
+export async function exchangeOAuthForApiKey(accessToken, { gridUrl, fetchImpl = fetch } = {}) {
+  const url = `${deriveWebAppOrigin(gridUrl)}/api/oauth/api-key`;
+  let res;
+  try {
+    res = await fetchImpl(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+    });
+  } catch (err) {
+    throw new Error(`Could not reach ${url} to issue an API key: ${err?.message ?? err}`);
+  }
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const j = await res.json();
+      detail = j?.message || j?.error || '';
+    } catch {
+      detail = (await res.text().catch(() => '')).slice(0, 200);
+    }
+    throw new Error(
+      `Could not exchange sign-in for an API key (HTTP ${res.status})${detail ? `: ${detail}` : ''}.`,
+    );
+  }
+  const body = await res.json();
+  if (!body?.apiKey) throw new Error('API key exchange returned no key.');
+  return { apiKey: body.apiKey, alias: body.alias ?? null, agentId: body.agentId ?? null };
+}
