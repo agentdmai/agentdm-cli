@@ -21,6 +21,7 @@ export function startWakeSource({
   let pollTimer = null;
   let reconnectTimer = null;
   let reconnectAttempts = 0;
+  let lastErrorDetail = '';
 
   const scheduleReconnect = () => {
     if (closed) return;
@@ -52,6 +53,7 @@ export function startWakeSource({
 
     es.onopen = () => {
       reconnectAttempts = 0;
+      lastErrorDetail = '';
       log('[wake] connected');
     };
 
@@ -62,8 +64,24 @@ export function startWakeSource({
       );
     };
 
-    es.onerror = () => {
+    es.onerror = (err) => {
       // EventSource fires error on disconnect AND during connect attempts.
+      // The `eventsource` package's ErrorEvent carries `code` (the HTTP status
+      // when the failure was an HTTP response) and `message`. Surface it: a
+      // silently-failing wake stream looks identical to an idle one and strands
+      // every message on the slow fallback poll. Dedupe so a persistent failure
+      // (e.g. a 401) doesn't spam once per backoff attempt.
+      const detail = err?.code
+        ? `HTTP ${err.code}${err?.message ? ` ${err.message}` : ''}`
+        : err?.message || 'disconnected';
+      if (detail !== lastErrorDetail) {
+        log(
+          `[wake] stream error (${detail}); falling back to ${Math.round(
+            fallbackPollMs / 1000,
+          )}s poll, retrying`,
+        );
+        lastErrorDetail = detail;
+      }
       // Close explicitly so we control reconnect timing instead of letting
       // the library reconnect at its own pace.
       try {
